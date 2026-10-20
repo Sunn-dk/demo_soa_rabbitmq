@@ -235,3 +235,51 @@ def scenario_free_scaling(total_orders: int = 8):
         "expected_rabbitmq": "Tất cả các Worker đều nhận việc chia tải đều.",
         "expected_kafka": "Chỉ 1 Worker duy nhất chạy, các Worker còn lại ĐỨNG IM (Idle) vì Topic chỉ có 1 Partition."
     }
+
+@app.get("/5-amqp-exchange-types", tags=["5. Kiến thức: 4 Loại AMQP Exchange (Direct, Fanout, Topic, Headers)"])
+def get_amqp_exchanges():
+    return {
+        "title": "Kiến trúc AMQP 0-9-1 & 4 Loại Exchange trong RabbitMQ",
+        "architecture_flow": "Producer -> Exchange -> Binding (Routing Key) -> Queue -> Consumer",
+        "exchange_types": {
+            "Direct": {
+                "mechanism": "Khớp chính xác (Exact match): routing_key == binding_key",
+                "use_case": "Phân phối tác vụ 1-1 đơn tuyến (Dự án đang dùng cho order_exchange)",
+                "example": "routing_key='order_key' -> chỉ vào Queue được bind với 'order_key'"
+            },
+            "Fanout": {
+                "mechanism": "Broadcast: Sao chép tin nhắn tới TẤT CẢ các Queue liên kết, bỏ qua routing key",
+                "use_case": "Publish/Subscribe: 1 sự kiện kích hoạt nhiều dịch vụ (Gửi Email, Ghi Log, Analytics)",
+                "example": "1 đơn hàng tạo -> Fanout đẩy đồng thời vào queue_invoice, queue_email, queue_audit"
+            },
+            "Topic": {
+                "mechanism": "Pattern Matching với ký tự đại diện: '*' (đúng 1 từ), '#' (0 hoặc nhiều từ)",
+                "use_case": "Định tuyến đa kênh, đa khu vực, phân loại độ ưu tiên động",
+                "example": "Binding 'order.*.vip' nhận 'order.hanoi.vip', 'order.hcm.vip'; binding 'order.#' nhận mọi thứ bắt đầu bằng 'order.'"
+            },
+            "Headers": {
+                "mechanism": "Định tuyến dựa trên thuộc tính trong Message Headers thay vì chuỗi routing key",
+                "use_case": "Định tuyến phức tạp với nhiều tiêu chí (x-match: all hoặc any)",
+                "example": "Headers {'format': 'pdf', 'type': 'report'}"
+            }
+        }
+    }
+
+@app.get("/6-reliability-and-idempotency", tags=["6. Kiến thức: Delivery Semantics & Idempotent Consumer"])
+def get_reliability_info():
+    return {
+        "title": "Độ tin cậy (Delivery Guarantees) và Mẫu Idempotent Consumer trong SOA",
+        "delivery_semantics": {
+            "at_most_once": "auto_ack=True: Tin xóa ngay khi gửi. Worker crash = mất tin nhắn vĩnh viễn.",
+            "at_least_once": "auto_ack=False (Manual ACK - Dự án dùng): Chỉ xóa tin khi nhận basic_ack. Nếu Worker crash, tin được Requeue tự động -> Không bao giờ mất dữ liệu."
+        },
+        "duplicate_problem": "Khi tin nhắn được Requeue sau khi Worker sập nguồn, Worker kế tiếp có thể xử lý lại đơn hàng đó.",
+        "solution_idempotent_consumer": {
+            "definition": "Xử lý f(x) nhiều lần vẫn cho ra kết quả như 1 lần duy nhất.",
+            "techniques": [
+                "Redis Distributed Key: SET order_id PENDING NX EX 300 trước khi xử lý",
+                "Database Unique Constraint: Cột order_id có ràng buộc UNIQUE trong bảng orders",
+                "State Machine Check: Chỉ xử lý nếu trạng thái trong DB hiện tại là PENDING, nếu đã COMPLETED thì bỏ qua"
+            ]
+        }
+    }

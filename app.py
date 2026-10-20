@@ -116,7 +116,7 @@ def get_rmq_connection() -> pika.BlockingConnection:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Khởi tạo Topology RabbitMQ (chạy an toàn, không làm sập server khi RabbitMQ chưa bật)
+# Khởi tạo Topology RabbitMQ
 # ─────────────────────────────────────────────────────────────────────────────
 def init_rabbitmq_topology() -> bool:
     try:

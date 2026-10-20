@@ -58,6 +58,10 @@
                     0.0 ms <span class="text-xs font-normal text-slate-400">(Non-blocking)</span>
                 </div>
             </div>
+            <a href="#seminar-guide"
+               class="bg-indigo-600 hover:bg-indigo-500 text-xs px-3 py-2.5 rounded-lg border border-indigo-400/40 text-white font-semibold transition-all duration-200 flex items-center gap-1.5 shadow-md">
+                <i class="fa-solid fa-graduation-cap text-amber-300"></i> Cẩm nang Seminar
+            </a>
             <a href="http://localhost:15672/#/queues" target="_blank" id="btn-rabbitmq-admin"
                class="bg-slate-700 hover:bg-orange-600 text-xs px-3 py-2.5 rounded-lg border border-slate-600 hover:border-orange-500 transition-all duration-200 flex items-center gap-1.5">
                 <i class="fa-solid fa-rabbit text-orange-400"></i> RabbitMQ Admin UI
@@ -231,7 +235,7 @@
                     Lịch Sử Đơn Xuất Kho Thành Công
                     <span class="text-slate-400 text-xs font-normal">(ACK)</span>
                 </h2>
-                <p class="text-xs text-slate-400 mb-3">Sau khi Worker gửi ACK, RabbitMQ xoá ngay khỏi Queue — đảm bảo đúng 1 lần xử lý (at-most-once)</p>
+                <p class="text-xs text-slate-400 mb-3">Sau khi Worker gửi ACK, RabbitMQ giải phóng tin nhắn — cơ chế <span class="text-emerald-400 font-semibold">At-least-once</span> đảm bảo tin cậy không thất thoát (kết hợp Idempotent Consumer ở Worker để xử lý chính xác 1 lần)</p>
                 <div id="completed-container" class="space-y-2 max-h-44 overflow-y-auto text-xs"></div>
             </div>
 
@@ -281,6 +285,126 @@
                     </div>
                     <div id="kafka-log-container" class="flex gap-2 overflow-x-auto pb-1 min-h-[64px] items-center"></div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ══════════════ KHU VỰC 5: CẨM NANG SEMINAR & KIẾN TRÚC NÂNG CAO ═════════ -->
+        <div id="seminar-guide" class="bg-slate-800 border-2 border-indigo-500/50 rounded-2xl p-6 shadow-2xl space-y-6">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 pb-4">
+                <div class="flex items-center gap-3">
+                    <div class="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-2.5 rounded-xl shadow-lg">
+                        <i class="fa-solid fa-graduation-cap text-xl"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                            Cẩm Nang Bảo Vệ Seminar: Kiến Trúc AMQP &amp; Đối Chiếu Chuyên Sâu
+                            <span class="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-medium">Lý thuyết + Thực tiễn</span>
+                        </h2>
+                        <p class="text-xs text-slate-400">Tài liệu tra cứu nhanh giải đáp các câu hỏi phản biện của giảng viên &amp; hội đồng</p>
+                    </div>
+                </div>
+                <div class="text-xs text-slate-400 flex items-center gap-2">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    Sẵn sàng cho phần Q&amp;A
+                </div>
+            </div>
+
+            <!-- Grid 3 Thẻ Chuyên Đề -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+                <!-- 1. AMQP Exchange Types -->
+                <div class="bg-slate-900/90 border border-slate-700 rounded-xl p-4 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-bold text-sm border-b border-slate-800 pb-2">
+                        <i class="fa-solid fa-route"></i>
+                        <span>1. Kiến Trúc AMQP &amp; 4 Loại Exchange</span>
+                    </div>
+                    <div class="text-[11px] text-slate-300 leading-relaxed space-y-2">
+                        <p class="text-slate-400">
+                            Trong chuẩn AMQP 0-9-1, Producer <b>không gửi trực tiếp vào Queue</b> mà gửi qua <b>Exchange</b>. Exchange căn cứ vào <b>Binding Rule</b> để định tuyến:
+                        </p>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                            <div>
+                                <span class="bg-sky-500/20 text-sky-300 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold">Direct (Dự án dùng)</span>
+                                <div class="text-slate-400 text-[10px] mt-0.5">Khớp 100% chính xác giữa <code>routing_key</code> và <code>binding_key</code>. Thích hợp cho tác vụ đơn tuyến (1-to-1).</div>
+                            </div>
+                            <div>
+                                <span class="bg-purple-500/20 text-purple-300 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold">Fanout (Broadcast)</span>
+                                <div class="text-slate-400 text-[10px] mt-0.5">Bỏ qua routing key, sao chép tin nhắn tới <b>tất cả Queue</b> liên kết (Publish/Subscribe: gửi email, ghi log, analytics).</div>
+                            </div>
+                            <div>
+                                <span class="bg-amber-500/20 text-amber-300 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold">Topic (Wildcards)</span>
+                                <div class="text-slate-400 text-[10px] mt-0.5">Khớp theo mẫu: <code>*</code> (đúng 1 từ), <code>#</code> (0 hoặc nhiều từ). Vd: <code>order.hanoi.vip</code>, <code>order.#</code>.</div>
+                            </div>
+                            <div>
+                                <span class="bg-emerald-500/20 text-emerald-300 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold">Headers</span>
+                                <div class="text-slate-400 text-[10px] mt-0.5">Định tuyến dựa trên cặp key-value trong Header của message thay vì routing key.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Delivery Guarantees & Idempotent Consumer -->
+                <div class="bg-slate-900/90 border border-slate-700 rounded-xl p-4 space-y-3">
+                    <div class="flex items-center gap-2 text-emerald-400 font-bold text-sm border-b border-slate-800 pb-2">
+                        <i class="fa-solid fa-shield-halved"></i>
+                        <span>2. Độ Tin Cậy &amp; Idempotent Consumer</span>
+                    </div>
+                    <div class="text-[11px] text-slate-300 leading-relaxed space-y-2">
+                        <p class="text-slate-400">
+                            Hiểu đúng về Delivery Semantics để giải thích hiện tượng <b>Requeue khi Worker sập nguồn</b>:
+                        </p>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                            <div>
+                                <span class="text-rose-400 font-bold">At-most-once (auto_ack=True):</span>
+                                <div class="text-slate-400 text-[10px]">Tin nhắn bị xóa ngay khi gửi. Nếu Worker sập lúc đang làm → <b>mất dữ liệu vĩnh viễn</b>.</div>
+                            </div>
+                            <div>
+                                <span class="text-emerald-400 font-bold">At-least-once (Manual ACK - Demo dùng):</span>
+                                <div class="text-slate-400 text-[10px]">RabbitMQ chỉ xóa tin sau khi nhận <code>basic_ack</code>. Nếu sập nguồn, tin được <b>requeue</b> cho Worker khác làm lại → <b>không bao giờ mất đơn</b>.</div>
+                            </div>
+                            <div class="border-t border-slate-800 pt-1.5">
+                                <span class="text-amber-300 font-bold">⚠️ Rủi ro trùng lặp &amp; Cách giải quyết:</span>
+                                <div class="text-slate-400 text-[10px] mt-0.5">
+                                    Nếu Worker xử lý xong (đã trừ tiền) nhưng sập <b>trước khi kịp gửi ACK</b>, Worker kế tiếp sẽ nhận lại đơn này.
+                                    <br>👉 <b>Giải pháp SOA:</b> Triển khai <b>Idempotent Consumer</b> bằng cách kiểm tra <code>order_id</code> trong Redis (<code>SETNX</code>) hoặc khoá <code>UNIQUE</code> Database trước khi trừ tiền.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. So Sánh Toàn Diện: RabbitMQ vs Kafka -->
+                <div class="bg-slate-900/90 border border-slate-700 rounded-xl p-4 space-y-3">
+                    <div class="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-slate-800 pb-2">
+                        <i class="fa-solid fa-scale-balanced"></i>
+                        <span>3. Khi Nào Chọn RabbitMQ vs Kafka?</span>
+                    </div>
+                    <div class="text-[11px] text-slate-300 leading-relaxed space-y-2">
+                        <p class="text-slate-400">
+                            Trả lời phản biện: <i>"Tại sao các công ty lớn vẫn dùng Kafka nếu RabbitMQ nhiều tính năng hơn?"</i>
+                        </p>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                            <div>
+                                <span class="text-orange-400 font-bold">Chọn 🐇 RabbitMQ khi:</span>
+                                <ul class="list-disc list-inside text-slate-400 text-[10px] mt-0.5 space-y-0.5">
+                                    <li>Cần <b>Task Queue</b> phân phối việc linh hoạt cho worker.</li>
+                                    <li>Cần <b>Priority Queue</b> (VIP vượt hàng) &amp; DLQ từng tin nhắn.</li>
+                                    <li>Cần định tuyến tin nhắn thông minh, phức tạp (Exchange/Binding).</li>
+                                    <li>Độ trễ phản hồi siêu thấp (Microsecond/Millisecond).</li>
+                                </ul>
+                            </div>
+                            <div class="border-t border-slate-800 pt-1.5">
+                                <span class="text-indigo-400 font-bold">Bắt buộc chọn 🐘 Apache Kafka khi:</span>
+                                <ul class="list-disc list-inside text-slate-400 text-[10px] mt-0.5 space-y-0.5">
+                                    <li><b>Big Data Event Streaming:</b> Thông lượng cực lớn (&gt; 1 triệu msg/s).</li>
+                                    <li><b>Replayability / Time Travel:</b> Cần tua lại đọc dữ liệu từ quá khứ (lưu trữ đĩa nhiều tuần/tháng).</li>
+                                    <li><b>Log Aggregation / Metrics / IoT:</b> Nhiều Consumer Group độc lập cùng phân tích 1 luồng dữ liệu.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
 

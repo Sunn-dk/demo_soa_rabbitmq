@@ -23,16 +23,59 @@
                                  └──────────────────────────────┘
 ```
 
-### Tại sao chọn RabbitMQ cho bài toán Order Fulfillment?
+### Bảng đối chiếu hai chiều: RabbitMQ vs Apache Kafka
 
-| Tiêu chí | 🐇 RabbitMQ | 🐘 Apache Kafka |
+| Tiêu chí | 🐇 RabbitMQ (Message Broker) | 🐘 Apache Kafka (Event Streaming Log) |
 |:---|:---|:---|
-| **Bản chất** | Smart Broker / Dumb Consumer | Dumb Broker / Smart Consumer (Log) |
-| **Priority Queue** | ✅ `x-max-priority`: đơn VIP tự nhảy lên đầu | ❌ Append-only, bắt buộc FIFO theo Offset |
-| **Xử lý lỗi (Poison Pill)** | ✅ `basic_nack(requeue=False)` → DLQ tự động | ❌ Kẹt cứng tại Offset lỗi (Head-of-Line Blocking) |
-| **Scale Worker tự do** | ✅ Thêm bao nhiêu Consumer cũng được (Fair Dispatch) | ⚠️ Tối đa = số Partition (bị khóa cứng) |
-| **At-least-once** | ✅ ACK / NACK từng message | ✅ Commit Offset (nhưng toàn batch) |
-| **Use case phù hợp** | Task Queue, Order Processing, RPC | Event Streaming, Log Aggregation, Analytics |
+| **Bản chất kiến trúc** | **Smart Broker / Dumb Consumer**: Broker quản lý trạng thái, routing, xóa tin khi ACK | **Dumb Broker / Smart Consumer**: Broker chỉ ghi Append-only Log, Consumer tự quản lý Offset |
+| **Độ ưu tiên (Priority)** | ✅ **Native `x-max-priority`**: Đơn VIP tự động nhảy hàng lên đầu Queue | ❌ **Không hỗ trợ native**: Bắt buộc đọc tuần tự FIFO theo Offset |
+| **Xử lý tin lỗi (Poison Pill)** | ✅ **Per-message NACK**: Đơn lỗi tự nhảy sang Dead Letter Queue, không chặn luồng | ❌ **Head-of-Line Blocking**: Kẹt cứng tại Offset lỗi nếu không tự code bỏ qua |
+| **Mở rộng Worker (Scale)** | ✅ **Tự do tuyệt đối**: Bao nhiêu Consumer cùng lắng nghe 1 Queue cũng được (Fair Dispatch) | ⚠️ **Khóa cứng theo Partition**: Số Consumer tối đa = Số Partition (thừa sẽ IDLE) |
+| **Độ tin cậy (Delivery)** | ✅ **At-least-once** (hoặc At-most-once tùy cờ ACK/NACK từng tin) | ✅ **At-least-once** / Exactly-once (Transactional Producer + Idempotent Consumer) |
+| **Lưu trữ dữ liệu (Retention)**| 🗑️ **Tạm thời**: Tin nhắn bị xóa ngay sau khi Consumer gửi ACK thành công | 💾 **Lâu dài / Vĩnh viễn**: Giữ log nhiều ngày/tháng, cho phép **Replay** dữ liệu cũ |
+| **Thông lượng (Throughput)** | ⚡ Hàng chục nghìn msg/giây (Tối ưu độ trễ microsecond/millisecond) | 🚀 **Hàng triệu msg/giây** (Tối ưu nhờ Sequential I/O, Page Cache, Zero-copy) |
+| **Khi nào nên chọn?** | **Task Queue, Order Processing, RPC, hệ thống cần định tuyến phức tạp** | **Big Data, Event Sourcing, Log Aggregation, Clickstream, IoT Stream** |
+
+---
+
+## 🏛️ Kiến trúc AMQP 0-9-1 & 4 Loại Exchange trong RabbitMQ
+
+Trong chuẩn **AMQP 0-9-1**, Producer **không bao giờ gửi trực tiếp vào Queue**, mà luôn gửi tới một **Exchange**. Exchange phân phối tin nhắn vào các Queue dựa trên **Binding Rule** và **Routing Key**:
+
+```
+[Producer] ──(Message + Routing Key)──▶ [Exchange]
+                                             │
+                       ┌─────────────────────┼─────────────────────┐
+             (Binding: "key_A")    (Binding: "key_B")    (Binding: "key_*")
+                       ▼                     ▼                     ▼
+                  [Queue A]              [Queue B]             [Queue C]
+                       │                     │                     │
+                       ▼                     ▼                     ▼
+                  [Consumer]            [Consumer]            [Consumer]
+```
+
+### 4 Loại Exchange phổ biến:
+
+| Loại Exchange | Cơ chế định tuyến | Use case thực tế trong SOA / Microservices |
+|:---|:---|:---|
+| **Direct** *(Dự án dùng)* | Khớp chính xác 100% giữa `routing_key` và `binding_key` | Điều phối tác vụ định danh cụ thể (1-to-1): Xử lý đơn hàng, gửi SMS OTP |
+| **Fanout** | Bỏ qua routing key, sao chép tin broadcast tới **tất cả Queue** được bind | Publish/Subscribe: Đơn hàng mới kích hoạt đồng thời Email, Kho vận, Analytics |
+| **Topic** | Khớp mẫu linh hoạt với ký tự đại diện: `*` (1 từ), `#` (0 hoặc nhiều từ) | Định tuyến đa vùng, đa kênh: `order.vietnam.vip`, `order.*.urgent`, `order.#` |
+| **Headers** | Định tuyến dựa trên các cặp key-value trong Message Header | Định tuyến khi tiêu chí không thể biểu diễn bằng chuỗi ký tự đơn giản |
+
+---
+
+## 🛡️ Độ tin cậy (Delivery Guarantees) & Mẫu Idempotent Consumer
+
+### 1. Delivery Semantics trong RabbitMQ:
+- **At-most-once (`auto_ack=True`):** Broker xóa tin nhắn ngay khi vừa gửi đi. Nếu Worker gặp sự cố/sập nguồn giữa chừng thì **mất dữ liệu vĩnh viễn**.
+- **At-least-once (`auto_ack=False` - Manual ACK):** Broker chỉ xóa tin nhắn sau khi nhận được `basic_ack`. Nếu Worker sập nguồn (như kịch bản "Giả lập Sập nguồn"), RabbitMQ **tự động Requeue tin nhắn** cho Worker khác làm lại.
+
+### 2. Giải bài toán trùng lặp khi Requeue (Idempotent Consumer):
+Khi một tin nhắn bị Requeue do Worker trước crash lúc đang thực hiện dở, có nguy cơ khách hàng bị **trừ tiền hoặc xuất kho 2 lần**. Trong kiến trúc SOA, Consumer bắt buộc phải áp dụng mẫu **Idempotent**:
+1. **Redis Lock / Cache:** Gọi `SET order_id PENDING NX EX 300`. Nếu đã tồn tại key thì từ chối xử lý lại.
+2. **Database Unique Constraint:** Đặt khoá `UNIQUE` cho trường `order_id` trong bảng giao dịch.
+3. **State Machine:** Chỉ thực thi nếu trạng thái đơn hàng là `NEW/PENDING`. Nếu đã là `PROCESSED` thì bỏ qua và gửi ngay `ACK`.
 
 ---
 
@@ -173,6 +216,8 @@ Dành cho trình bày chi tiết nguyên lý code với `worker.py` & `worker2.p
 | `POST /2-scenario-priority-queue` | **VIP-999 vào cuối #6/6 nhưng RabbitMQ bốc ra #1; Kafka bị ép làm #6** |
 | `POST /3-scenario-dlq-isolation` | **RabbitMQ cô lập đơn lỗi sang DLQ; Kafka kẹt cứng toàn luồng** |
 | `POST /4-scenario-free-scaling` | Mở thêm Worker: **RabbitMQ chia đều; Kafka thừa Worker ngồi chơi** |
+| `GET /5-amqp-exchange-types` | Tra cứu lý thuyết & bảng so sánh 4 loại AMQP Exchange (Direct, Fanout, Topic, Headers) |
+| `GET /6-reliability-and-idempotency` | Tra cứu lý thuyết At-least-once, rủi ro Requeue và mẫu thiết kế Idempotent Consumer |
 
 #### (Tùy chọn) Scale thêm Worker cho kịch bản 4:
 
