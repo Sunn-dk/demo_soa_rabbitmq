@@ -153,9 +153,30 @@ def reset_cli_queues():
     p1 = ch.queue_purge(queue='order_main_queue')
     p2 = ch.queue_purge(queue='dead_letter_queue')
     conn.close()
+
+    kafka_info = ""
+    try:
+        admin = AdminClient({'bootstrap.servers': KAFKA_BOOTSTRAP, 'socket.timeout.ms': 2000})
+        fs_del = admin.delete_topics([KAFKA_TOPIC], request_timeout=2.0)
+        for _, f in fs_del.items():
+            try:
+                f.result(timeout=2.0)
+            except Exception:
+                pass
+        time.sleep(0.5)
+        fs_create = admin.create_topics([NewTopic(KAFKA_TOPIC, num_partitions=1, replication_factor=1)], request_timeout=2.0)
+        for _, f in fs_create.items():
+            try:
+                f.result(timeout=2.0)
+            except Exception:
+                pass
+        kafka_info = f" và dọn sạch Kafka Topic '{KAFKA_TOPIC}' về 0 tin"
+    except Exception as e:
+        kafka_info = f" (Kafka reset: {e})"
+
     return {
         "status": "success",
-        "message": f"Đã dọn sạch hàng đợi CLI: xóa {p1.method.message_count} đơn từ 'order_main_queue' và {p2.method.message_count} đơn từ 'dead_letter_queue'."
+        "message": f"Đã dọn sạch hàng đợi CLI: xóa {p1.method.message_count} đơn từ 'order_main_queue' và {p2.method.message_count} đơn từ 'dead_letter_queue'{kafka_info}."
     }
 
 # =============================================================================
