@@ -23,6 +23,13 @@ process_counter = 0
 def now_ms():
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
+# =============================================================================
+# [ĐIỂM NHẤN 5.1 - KAFKA: GIỚI HẠN SCALE THEO SỐ PARTITION (WORKER THỪA BỊ IDLE)]
+# - Kafka quy định: Trong cùng 1 Consumer Group, 1 Partition chỉ gán cho DUY NHẤT 1 Consumer.
+# - Vì Topic này có 1 Partition -> Khi bạn mở Worker thứ 2 (worker2.py Kafka-Worker-2),
+#   nó KHÔNG ĐƯỢC CẤP PARTITION NÀO VÀ PHẢI NGỒI CHƠI (IDLE)!
+# - So sánh với RabbitMQ: RabbitMQ mở bao nhiêu Worker cũng nhận việc chia tải được ngay!
+# =============================================================================
 def on_assign(consumer, partitions):
     print("\n" + "="*75)
     if len(partitions) == 0:
@@ -64,6 +71,13 @@ def main():
 
     try:
         while True:
+            # =============================================================================
+            # [ĐIỂM NHẤN 5.2 - KAFKA: APPEND-ONLY LOG, ĐƠN VIP KHÔNG THỂ NHẢY HÀNG]
+            # - consumer.poll(): Consumer chủ động KÉO (Pull) dữ liệu tuần tự theo Offset (0, 1, 2, ...).
+            # - Do cấu trúc Append-only Log bất biến, đơn VIP nạp sau (Offset lớn hơn) bắt buộc
+            #   phải xếp hàng chờ xử lý sau toàn bộ 5 đơn thường nạp trước!
+            # - So sánh với RabbitMQ: RabbitMQ tự động đẩy đơn VIP lên vị trí số 1 ngay lập tức.
+            # =============================================================================
             msg = consumer.poll(1.0)
             if msg is None:
                 continue
@@ -111,7 +125,14 @@ def main():
             print(f"⏳ [{worker_name}] Đang xử lý nghiệp vụ (tốn 3 giây)...")
             time.sleep(3)
 
-            # 2. Chứng minh Kafka bị kẹt luồng (Head-of-Line Blocking) khi gặp tin nhắn lỗi
+            # =============================================================================
+            # [ĐIỂM NHẤN 5.3 - KAFKA: NGHẼN ĐẦU HÀNG (HEAD-OF-LINE BLOCKING) DO THIẾU NACK]
+            # - Kafka chỉ commit vị trí Offset tuần tự, KHÔNG có lệnh basic_nack cho từng tin.
+            # - Khi gặp tin lỗi (Poison Pill), Consumer không thể commit Offset đó -> KẸT CỨNG
+            #   (Head-of-Line Blocking), làm đơn ORD-GOOD-02 ở Offset kế tiếp bị chặn đứng!
+            # - So sánh với RabbitMQ: RabbitMQ gửi basic_nack(requeue=False) chuyển sang DLQ,
+            #   các đơn tiếp theo lập tức được xử lý trơn tru không hề bị kẹt!
+            # =============================================================================
             if data.get("simulate_error"):
                 print(f"\n💥 [{worker_name}] LỖI NGHIỆP VỤ tại {order_id} (Offset {offset})!")
                 print(f"   ├── Hạn chế của Kafka : Kafka KHÔNG có lệnh NACK đẩy tự động sang Dead Letter Queue cho từng tin.")

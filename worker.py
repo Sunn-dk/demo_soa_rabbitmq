@@ -27,10 +27,9 @@ def now_ms():
 
 def main():
     try:
-        credentials = (
-            pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-            if (RABBITMQ_USER and RABBITMQ_PASS)
-            else None
+        credentials = pika.PlainCredentials(
+            RABBITMQ_USER or "guest",
+            RABBITMQ_PASS or "guest"
         )
         conn = pika.BlockingConnection(
             pika.ConnectionParameters(
@@ -61,7 +60,13 @@ def main():
     ch.queue_declare(queue='order_main_queue', durable=True, arguments=queue_args)
     ch.queue_bind(exchange='order_exchange', queue='order_main_queue', routing_key='order_key')
 
-    # Fair Dispatch: Chỉ nhận 1 message tại 1 thời điểm
+    # =============================================================================
+    # [ĐIỂM NHẤN 3 - CHIA TẢI CÔNG BẰNG (FAIR DISPATCH)]
+    # - Mặc định RabbitMQ gửi tin nhắn theo Round-Robin mù quáng (Worker bận vẫn bị nhồi).
+    # - basic_qos(prefetch_count=1): Chỉ giao DUY NHẤT 1 tin nhắn cho Worker tại 1 thời điểm.
+    #   Chỉ khi Worker xử lý xong và gửi ACK về, RabbitMQ mới được cấp tin tiếp theo!
+    # - Đây là chìa khóa giúp mở rộng Worker tự do (Scale horizontally) mà tải vẫn chia đều.
+    # =============================================================================
     ch.basic_qos(prefetch_count=1)
 
     def callback(ch, method, properties, body):
@@ -104,6 +109,15 @@ def main():
         print(f"⏳ [{worker_name}] Đang xử lý nghiệp vụ (tốn 3 giây)...")
         time.sleep(3)
 
+        # =============================================================================
+        # [ĐIỂM NHẤN 4 - CƠ CHẾ ACK & CÔ LẬP LỖI NACK/DLQ]
+        # 1. basic_nack(requeue=False): Tin lỗi (Poison Pill). requeue=False báo cho
+        #    RabbitMQ KHÔNG nhồi lại hàng đợi chính mà bắn thẳng sang Dead Letter Queue (DLQ).
+        #    -> Giúp các đơn hợp lệ phía sau chạy tiếp, KHÔNG BỊ KẸT luồng!
+        # 2. basic_ack: Báo cho Broker đã hoàn tất -> Xóa tin khỏi Queue (At-least-once).
+        # 3. NẾU WORKER SẬP NGUỒN: Kết nối đứt mà chưa gửi ACK -> RabbitMQ tự động
+        #    REQUEUE tin nhắn về Queue để Worker khác làm tiếp (Fault Tolerance).
+        # =============================================================================
         if data.get("simulate_error"):
             print(f"❌ [{worker_name}] PHÁT HIỆN LỖI tại {order_id}! Gửi NACK (requeue=False) -> Cô lập sang Dead Letter Queue!")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)

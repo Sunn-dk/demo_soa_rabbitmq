@@ -33,10 +33,9 @@ def now_ms():
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 def get_rmq_channel():
-    credentials = (
-        pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-        if (RABBITMQ_USER and RABBITMQ_PASS)
-        else None
+    credentials = pika.PlainCredentials(
+        RABBITMQ_USER or "guest",
+        RABBITMQ_PASS or "guest"
     )
     conn = pika.BlockingConnection(
         pika.ConnectionParameters(
@@ -56,7 +55,15 @@ except Exception as e:
     print(f"⚠️ Lưu ý khởi tạo Kafka Producer: {e}")
 
 def setup_topology():
-    # 1. Thiết lập RabbitMQ Topology
+    # =============================================================================
+    # [ĐIỂM NHẤN 1 - KHỞI TẠO QUEUE, PRIORITY & DLQ]
+    # 1. durable=True: Lưu hàng đợi xuống đĩa, Broker restart không mất Queue.
+    # 2. x-max-priority: 10: Kích hoạt Hàng đợi Ưu tiên (Priority Queue mức 1->10).
+    #    -> Cho phép đơn hàng VIP (Priority=10) tự động vượt lên đầu hàng đợi!
+    # 3. x-dead-letter-exchange & x-dead-letter-routing-key: 
+    #    -> Cấu hình Dead Letter Queue (DLQ): Khi Worker gửi basic_nack(requeue=False),
+    #       RabbitMQ tự động chuyển tin lỗi sang 'dead_letter_queue' mà không làm nghẽn luồng.
+    # =============================================================================
     try:
         conn, ch = get_rmq_channel()
         ch.exchange_declare(exchange='dlx_exchange', exchange_type='direct')
@@ -104,7 +111,13 @@ def publish_both(ch, order_id: str, priority: int, simulate_error: bool, note: s
     }
     body_str = json.dumps(payload)
 
-    # 1. Gửi vào RabbitMQ (nếu bật)
+    # =============================================================================
+    # [ĐIỂM NHẤN 2 - PRODUCER & GIAO TIẾP BẤT ĐỒNG BỘ (ASYNC)]
+    # 1. delivery_mode=2: Persistent Message -> Tin nhắn được ghi xuống đĩa (Disk),
+    #    kể cả khi RabbitMQ sập nguồn thì tin nhắn vẫn không bao giờ bị mất!
+    # 2. priority=priority: Gán mức độ ưu tiên trực tiếp vào thuộc tính của tin nhắn.
+    #    Đơn VIP sẽ mang priority=10, đơn thường mang priority=1.
+    # =============================================================================
     if send_to_rabbitmq and ch:
         try:
             ch.basic_publish(
@@ -145,6 +158,11 @@ def reset_cli_queues():
         "message": f"Đã dọn sạch hàng đợi CLI: xóa {p1.method.message_count} đơn từ 'order_main_queue' và {p2.method.message_count} đơn từ 'dead_letter_queue'."
     }
 
+# =============================================================================
+# [ĐIỂM NHẤN 2.1 - MINH HỌA NON-BLOCKING ASYNC TRẢ VỀ < 100MS]
+# - Khách hàng bấm đặt đơn -> API phản hồi ngay HTTP 202 Accepted (< 100ms)
+# - Không hề bị nghẽn (blocking) dù Worker mất 3 giây để đóng gói xuất kho!
+# =============================================================================
 @app.post("/1-async-single-order", tags=["1. Giao tiếp Bất đồng bộ (Async)"])
 def create_single_order(order_id: str = "ORD-101", priority: int = 1, simulate_error: bool = False):
     start = time.time()
