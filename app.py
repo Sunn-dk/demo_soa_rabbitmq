@@ -99,9 +99,10 @@ def now_str() -> str:
 
 
 def get_rmq_connection() -> pika.BlockingConnection:
-    credentials = pika.PlainCredentials(
-        RABBIT_USER or "guest",
-        RABBIT_PASS or "guest"
+    credentials = (
+        pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+        if (RABBIT_USER and RABBIT_PASS)
+        else None
     )
     return pika.BlockingConnection(
         pika.ConnectionParameters(
@@ -127,15 +128,7 @@ def init_rabbitmq_topology() -> bool:
         ch.queue_declare(queue=DLQ_QUEUE, durable=True)
         ch.queue_bind(exchange=DLX_EXCHANGE, queue=DLQ_QUEUE, routing_key=DLQ_ROUTING)
 
-        # =============================================================================
-        # [ĐIỂM NHẤN 1 - KHỞI TẠO QUEUE, PRIORITY & DLQ]
-        # 1. durable=True: Lưu hàng đợi trên đĩa cứng, Broker khởi động lại không mất Queue.
-        # 2. x-max-priority: 10: Kích hoạt Hàng đợi Ưu tiên (Priority Queue mức 1->10).
-        #    -> Đơn VIP (Priority=10) sẽ tự động nhảy lên đầu hàng đợi!
-        # 3. x-dead-letter-exchange & x-dead-letter-routing-key:
-        #    -> Thiết lập Dead Letter Queue (DLQ): Khi Worker gửi basic_nack(requeue=False),
-        #       RabbitMQ tự động chuyển tin lỗi sang DLQ ('flashorder_dlq').
-        # =============================================================================
+        # Main Exchange & Priority Queue (x-max-priority: 10)
         ch.exchange_declare(exchange=EXCHANGE, exchange_type="direct", durable=True)
         ch.queue_declare(
             queue=MAIN_QUEUE,
@@ -200,11 +193,6 @@ def publish_order_to_system(
     }
 
     # 1. Đẩy thật vào RabbitMQ (nếu kết nối được)
-    # =============================================================================
-    # [ĐIỂM NHẤN 2 - PRODUCER & GIAO TIẾP BẤT ĐỒNG BỘ (ASYNC)]
-    # - delivery_mode=2: Persistent Message (Ghi tin xuống đĩa, Broker sập không mất).
-    # - priority: Gán trọng số ưu tiên trực tiếp (VIP = 10, Đơn thường = 1).
-    # =============================================================================
     try:
         conn = get_rmq_connection()
         ch   = conn.channel()
@@ -276,12 +264,6 @@ def rabbitmq_worker_loop(
             try:
                 conn = get_rmq_connection()
                 ch   = conn.channel()
-                # =============================================================================
-                # [ĐIỂM NHẤN 3 - CHIA TẢI CÔNG BẰNG (FAIR DISPATCH)]
-                # - basic_qos(prefetch_count=1): Mỗi Trạm Worker chỉ nhận đúng 1 đơn tại 1 thời điểm.
-                #   Phải xử lý xong và gửi ACK thì RabbitMQ mới cấp đơn tiếp theo.
-                # - Giúp nút "Thêm Trạm Worker" trên Web Dashboard chia tải song song hoàn hảo!
-                # =============================================================================
                 ch.basic_qos(prefetch_count=1)
                 with STATE_LOCK:
                     if worker_id in SYSTEM_STATE["workers"]:
@@ -348,13 +330,6 @@ def rabbitmq_worker_loop(
                 if worker_id in SYSTEM_STATE["workers"]:
                     SYSTEM_STATE["workers"][worker_id]["progress"] = int((step / 8) * 100)
 
-        # =============================================================================
-        # [ĐIỂM NHẤN 4 - CƠ CHẾ ACK, NACK/DLQ & TỰ THU HỒI ĐƠN KHI SẬP NGUỒN]
-        # 1. SẬP NGUỒN (crashed=True): Khi bấm nút "Giả lập Sập nguồn", đóng kết nối mà KHÔNG gửi ACK.
-        #    -> RabbitMQ tự động thu hồi (REQUEUE) đơn hàng về đầu Queue để trạm khác làm tiếp!
-        # 2. basic_nack(requeue=False): Đơn lỗi nghiệp vụ -> tự động cô lập sang Dead Letter Queue (DLQ).
-        # 3. basic_ack: Xuất kho thành công -> RabbitMQ an tâm xóa tin khỏi Queue (At-least-once).
-        # =============================================================================
         # ── Giả lập sập nguồn giữa chừng ──────────────────────────────────
         if crashed:
             # Đóng kết nối không gửi ACK → RabbitMQ tự thu hồi (requeue) đơn
@@ -535,11 +510,6 @@ def get_state():
         return copy.deepcopy(SYSTEM_STATE)
 
 
-# =============================================================================
-# [ĐIỂM NHẤN 2.1 - NON-BLOCKING ASYNC TRÊN WEB DASHBOARD]
-# - API phản hồi HTTP 202 Accepted ngay trong vài mili-giây (< 50ms)
-# - Kho vận xử lý ngầm (4s/đơn) mà giao diện người dùng không hề bị đơ (locked)!
-# =============================================================================
 @app.post("/api/orders", summary="Đặt 1 đơn hàng mới (bất đồng bộ, phản hồi < 200ms)")
 def api_create_order(req: OrderRequest):
     start = time.time()
