@@ -1,156 +1,128 @@
-# RabbitMQ Seminar Lab
+# Mộc Studio — cửa hàng thực hành RabbitMQ
 
-Bài thực hành SOA trong 15–20 phút: nhìn thấy message đi qua producer, exchange, queue và consumer. Giao diện dùng RabbitMQ thật, worker là tiến trình riêng. Kafka là phần mở rộng về replay, không phải mô phỏng bất lợi cho Kafka.
+Demo seminar 15–20 phút: khách chọn quần áo, đặt đơn COD, nhận hóa đơn PDF chi tiết qua email. Hai loại consumer **tạo hóa đơn** và **gửi email** chạy bằng tiến trình thật. Phòng vận hành hiển thị queue, worker, ACK, redelivery, DLQ và payload. Kafka thực hiện **cùng hàm nghiệp vụ** để so sánh cách chia việc, xử lý lỗi và đọc lại log.
 
-## Chạy nhanh trên máy của bạn
+## Clone và chạy
 
-1. Cài [Docker Desktop](https://docs.docker.com/get-started/introduction/get-docker/). Windows dùng Linux containers/WSL 2 theo hướng dẫn của Docker. macOS/Linux dùng Docker Engine và Compose tương ứng.
-2. Mở Docker Desktop và đợi Engine chạy. Cài [Git](https://git-scm.com/downloads), sau đó mở PowerShell/Terminal và clone:
+Cài [Git](https://git-scm.com/downloads) và [Docker Desktop](https://docs.docker.com/get-started/introduction/get-docker/), mở Docker và đợi Engine sẵn sàng. Windows dùng Linux containers/WSL 2. Không cần cài Python hoặc Node nếu chạy bằng Docker.
 
 ```powershell
 git clone https://github.com/Sunn-dk/demo_soa_rabbitmq.git
 cd demo_soa_rabbitmq
+docker compose --profile kafka up -d --build --wait --wait-timeout 240
 ```
 
-3. Khởi động RabbitMQ và web, đợi cả hai báo healthy:
-
-```powershell
-docker compose up -d --build --wait --wait-timeout 180
-```
-
-4. Mở [dashboard](http://localhost:8000). Ban đầu có **0 worker** để chứng minh bất đồng bộ. Bấm **Gửi 1 job qua RabbitMQ**, đợi số Ready cập nhật, rồi bấm **+ Thêm worker**.
-
-Không cần cài Python/Node trên máy nếu chạy bằng Docker. Lần đầu cần Internet để tải image và thư viện. Có thể bấm `start-demo.cmd` trên Windows thay cho gõ lệnh. Nếu cổng 8000/5672/15672 đã có ứng dụng khác sử dụng, dừng bản demo cũ trước.
-
-Hướng dẫn Word để tải về hoặc gửi cho người học: [Hướng dẫn clone và chạy demo](docs/Huong_Dan_Clone_Va_Chay_Demo_SOA.docx).
-
-| Địa chỉ | Mục đích |
+| Địa chỉ | Chức năng |
 |---|---|
-| http://localhost:8000 | Demo và hướng dẫn thao tác ngay trên web |
-| http://localhost:8000/docs | API để cả lớp thử lại |
-| http://localhost:15672 | RabbitMQ Management, `guest` / `guest` |
+| http://localhost:8000 | Cửa hàng → Đơn hàng → Phòng vận hành → RabbitMQ & Kafka |
+| http://localhost:8025 | Mailpit: email SMTP và PDF đính kèm, giữ trong máy thực hành |
+| http://localhost:15672 | RabbitMQ Management, tài khoản demo `guest` / `guest` |
+| http://localhost:8000/docs | API, nhóm **Cửa hàng thực tế** |
+| http://localhost:8000/lab | Lab v3 trước đây để tham khảo |
 
-Các cổng được bind vào 127.0.0.1 để chạy trên từng máy. Mỗi bạn chạy bản riêng, không cần truy cập máy của người thuyết trình.
+Windows có thể bấm `start-demo.cmd`. Nếu chỉ học RabbitMQ, dùng `docker compose up -d --build --wait --wait-timeout 240`; phần Kafka cần profile riêng.
 
-## Những thí nghiệm cần làm
+## Thử ngay theo đúng luồng
 
-| Thí nghiệm | Thao tác | Bằng chứng cần chỉ ra |
-|---|---|---|
-| Bất đồng bộ | 0 worker, gửi 1 job | HTTP 202 sau confirm, Ready tăng, hóa đơn chưa có |
-| Message cụ thể | Bấm Job ID trong bảng | Body, properties, exchange, routing key của cùng ID |
-| Chia việc | Gửi 6 job, thêm worker thứ hai | Hai job processing trên hai worker khác nhau |
-| Thứ tự | 2 worker rảnh, queue trống, bấm **Thứ tự: gửi 6s rồi 1s** | Job gửi sau hoàn tất trước; FIFO không tự điều phối phụ thuộc nghiệp vụ |
-| Worker sập | Job 6 giây, bấm Dừng/crash khi processing | REDELIVER, cùng ID, lượt nhận tăng |
-| Sập sau ghi DB | Giữ 1 worker, bấm **Sập sau COMMIT, trước ACK**, sau đó thêm worker mới | COMMIT, CRASH_BEFORE_ACK, REDELIVER, DEDUP; 2 lượt nhận nhưng 1 hóa đơn |
-| Tin lỗi | Gửi job lỗi rồi job thường | NACK, DLQ tăng, job thường vẫn chạy; sửa và retry được |
-| Kafka replay | Bật Kafka, chạy lab cuối trang | Group B đọc lại 6 event đã được group A đọc và commit |
+1. **Cửa hàng:** thêm sản phẩm, chọn kích cỡ, nhập tên/email/địa chỉ và đặt hàng. Dùng email ví dụ `minhanh@example.test`. Server tự tính giá từ catalogue.
+2. Ban đầu **0 worker**. Đơn đã lưu, HTTP **202**, nhưng chưa có hóa đơn. Tại **Phòng vận hành**, chọn RabbitMQ: outbox được publish rồi Ready tăng. HTTP 202 ở cửa hàng nghĩa là **đơn + outbox đã commit**, chưa hứa hoàn thành hoặc broker đã nhận.
+3. Bấm **+ Thêm consumer** ở **Tạo hóa đơn PDF**. Xem Ready → Unacked, worker nhận mã đơn, `PDF_RENDER`, `INVOICE_COMMIT`, `ACK_SENT`. Đơn có PDF thật; email vẫn chờ vì chưa có consumer gửi email.
+4. Thêm consumer ở **Gửi email kèm PDF**. Mở **Hộp thư thực hành**, đọc thư và tải PDF. Không cần Gmail, API key hoặc mật khẩu SMTP ngoài.
+5. Tạo 6 đơn và thêm worker để thấy chia việc. Đặt **Nhịp quan sát 4s** nếu cần nhìn rõ; chọn **0s** để bỏ khoảng giãn. Khoảng giãn áp dụng giống nhau cho hai broker, không phải thời gian truyền tin.
 
-Thời gian 1/3/6 giây là **nghiệp vụ cố ý làm chậm**, không phải RabbitMQ mất từng đó thời gian để truyền tin. Chỉ số HTTP đo cả kết nối, khai báo topology, publish confirm và ghi log. Không dùng nó để kết luận RabbitMQ nhanh hơn Kafka.
+Đây là cửa hàng cục bộ cho seminar: không thu tiền, không có giao vận thật; PDF là chứng từ minh họa, không phải hóa đơn điện tử thuế. Mailpit nhận thư qua SMTP nhưng không tự chuyển ra hộp thư Internet.
 
-Ready/Unacked/DLQ lấy từ Management API, có độ trễ lấy mẫu vài giây. Bảng job và event log là quan sát ứng dụng, không phải bản sao chính xác tức thời của bộ nhớ broker. Trạng thái `processing` còn có thể là quan sát cuối trước khi worker sập.
+## Các tình huống minh chứng
 
-## Bật phần Kafka (tùy chọn)
+| Tình huống | Thao tác / bằng chứng |
+|---|---|
+| Bất đồng bộ | Đặt hàng khi 0 worker: đơn đã lưu, queue có tin, chưa có PDF/email; thêm từng loại consumer để tiếp tục |
+| Producer–consumer / routing | Dispatcher gửi `invoice` qua exchange `seminar.shop.v4.tasks`; worker hóa đơn tạo tác vụ `email` qua outbox; hai queue, hai vai trò |
+| Chia việc | Nhịp 4s, tạo 6 đơn, thêm 2–4 consumer hóa đơn: thẻ worker và log có mã đơn khác nhau |
+| Worker chết | Crash khi đang tạo PDF: worker khác nhận lại cùng task, log `REDELIVER`; không cần đặt lại đơn |
+| Sập sau COMMIT trước ACK | Bấm **Sập sau lưu hóa đơn**, có ít nhất 2 consumer hóa đơn hoặc thêm consumer mới sau crash: `INVOICE_COMMIT → CRASH_BEFORE_ACK → REDELIVER → DEDUP → ACK_SENT` |
+| Sai email | **Đơn lỗi email + 2 đơn tốt**: PDF vẫn được tạo, tác vụ email sai vào DLQ; hai email hợp lệ tiếp tục gửi |
+| Sửa lỗi | Nhập email hợp lệ tại **DLQ & tác vụ bị chặn** rồi **Sửa email & thử lại**; giữ nguyên mã đơn/task |
+| Broker vắng mặt | Đơn và outbox vẫn lưu cùng transaction; dispatcher thử lại, chỉ đánh dấu published khi nhận confirm |
 
-```powershell
-docker compose --profile kafka up -d --wait --wait-timeout 240
+Ready/Unacked/DLQ lấy từ Management API, có độ trễ lấy mẫu. Trạng thái worker và log là quan sát ứng dụng. `ACK_SENT` nghĩa là ứng dụng đã gửi ACK, không phải một biên nhận ACK ngược từ broker.
+
+## Kafka: cùng công việc, khác cách chia việc
+
+Ở tab **RabbitMQ & Kafka**, chạy lần lượt:
+
+1. **Chuẩn bị 4 worker hóa đơn mỗi bên**, chờ sẵn sàng, rồi **Nạp 6 đơn thật mỗi bên**. RabbitMQ có 4 consumer trên một queue; Kafka classic group có topic 2 partition nên chỉ 2 consumer có assignment. Thẻ worker hiển thị assignment thực, không gán số giả trên giao diện.
+2. **Chạy tình huống lỗi trên cả hai broker**: một email sai rồi hai email đúng. Bên Kafka cố ý đặt cùng partition 0 và dùng chính sách giữ thứ tự; partition đó pause ở record lỗi. RabbitMQ NACK riêng tác vụ lỗi sang DLQ, nhận tác vụ tốt tiếp theo. Tại phòng vận hành Kafka, bấm **Chuyển sang topic lỗi** để ứng dụng publish DLQ topic, commit offset nguồn rồi gửi tiếp hai thư tốt; hoặc sửa email và retry tại chỗ.
+3. **Đọc lại bằng group analytics mới**: Kafka đọc topic hóa đơn đã xử lý, không tạo lại PDF/email. Đây là điểm mạnh của log có retention khi thêm ứng dụng phân tích sau này.
+
+RabbitMQ thuận tiện cho phân phối và xác nhận/từ chối từng công việc độc lập. Kafka có thể tăng partition, xây retry/DLQ hoặc dùng mô hình khác. Pause là chính sách của ứng dụng, không phải Kafka bắt buộc dừng toàn hệ thống. Không dùng đồng hồ demo để kết luận throughput chung. Xem [phân tích và phản biện](docs/SO_SANH_KAFKA.md).
+
+## Code và dữ liệu
+
+```text
+Trình duyệt → POST /api/shop/checkout → SQLite (đơn + outbox) → HTTP 202
+                              ↓ dispatcher / publisher confirm
+         exchange → queue invoice → consumer tạo PDF
+                                          ↓ commit hóa đơn + outbox email
+         exchange → queue email → consumer SMTP → Mailpit + PDF đính kèm
 ```
 
-Đợi Kafka khởi động, sau đó bấm **Chạy thí nghiệm Kafka replay**. Mỗi lần tạo topic riêng, 3 partition, 6 event, retention 1 giờ. Group A đọc và commit, group B mới dùng `earliest` đọc lại. Đợi khoảng vài đến vài chục giây, không bấm liên tục. Topic vẫn tồn tại sau khi dữ liệu hết retention.
+| File | Trách nhiệm |
+|---|---|
+| `shop_api.py` | Checkout 202, dispatcher outbox, tạo/kill worker, tình huống, retry, Kafka replay |
+| `shop_store.py` | Giá server, snapshot đơn, transaction, idempotency, invoices/deliveries/events |
+| `shop_broker.py` | RabbitMQ topology/publish/metrics; Kafka topic/partition, producer xác nhận delivery |
+| `shop_worker.py` | RabbitMQ manual ACK/NACK, prefetch=1; Kafka assignment/pause/retry/manual commit |
+| `shop_fulfillment.py` | Cùng hàm nghiệp vụ cho hai broker: PDF tiếng Việt và SMTP kèm file |
+| `index.html`, `static/shop.js`, `static/shop.css` | Cửa hàng light mode, đơn hàng, điều khiển và quan sát |
+| `app.py` | Ghép API cửa hàng, giữ API/lab v3 |
 
-Kafka lab dùng **Consumer Groups truyền thống**. Kafka Share Groups là một cơ chế khác có chia sẻ record và ACK từng record. RabbitMQ cũng có Streams để lưu log và replay. Xem [tài liệu học](docs/TAI_LIEU_HOC.md) để tránh khái quát sai.
+- Đơn, outbox, hóa đơn, sổ gửi và log: **`data/shop.sqlite3`**. PDF: **`data/invoices/<order_id>.pdf`**.
+- Mailpit: Docker volume **mail-data**, giữ tối đa 500 email.
+- Queue: **`seminar.shop.v4.invoice`**, **`seminar.shop.v4.email`**, mỗi queue có `.failed` DLQ.
+- Topic: **`seminar.shop.v4.<generation>.invoice/email`**, mỗi topic 2 partition; topic lỗi `.dead`.
+- Web chỉ hiển thị 100 đơn/100 outbox gần nhất; tổng toàn DB đếm riêng. API trả 250 event mới nhất.
 
-## Reset và dừng
+## Độ tin cậy và giới hạn
 
-Để reset từ web, dừng mọi worker bằng nút Dừng/crash, chờ broker nhận mất kết nối, sau đó bấm **Reset dữ liệu demo**. Nếu còn worker CLI thì dừng terminal đó. Reset chỉ dọn queue `seminar.v3.invoices`, DLQ tương ứng và SQLite của demo, không dọn queue khác.
+Order + outbox và invoice + outbox email được commit cùng transaction tương ứng. Dispatcher có thể publish lặp nếu sập giữa confirm và đánh dấu DB. Consumer dùng mã đơn duy nhất để tránh thêm hóa đơn/tác vụ email. SQLite, broker và SMTP không có transaction chung. Nếu SMTP đã nhận thư nhưng worker chưa ghi sổ, email vẫn có thể lặp; Message-ID ổn định không đảm bảo bên nhận tự loại trùng.
+
+Mỗi hệ chỉ có một broker: RabbitMQ classic durable queues, Kafka replication factor 1, không phải HA. Classic DLX có giới hạn khi chặng đích lỗi. Bộ điều khiển không có đăng nhập, chỉ bind cổng vào `127.0.0.1` và dùng một web process. Triển khai thật cần auth, quản lý worker riêng, retry/backoff, giám sát, backup và replication. Kafka còn có **Share Groups**; RabbitMQ còn có **Streams**.
+
+## Cập nhật, cấu hình, reset và dừng
+
+```powershell
+git pull --ff-only
+docker compose --profile kafka up -d --build --wait --wait-timeout 240
+```
+
+Mặc định không cần `.env`. Cổng bận thì `Copy-Item .env.example .env` rồi sửa WEB_PORT/MAILPIT_WEB_PORT/AMQP_PORT/MANAGEMENT_PORT/KAFKA_PORT/SMTP_PORT. macOS/Linux dùng `cp`. Không commit `.env`, dữ liệu khách, database hoặc token. Tài khoản ví dụ chỉ dùng demo; đổi biến RabbitMQ không tự đổi tài khoản trong volume cũ.
+
+**Reset cửa hàng:** dừng các worker, chờ broker nhận mất kết nối, bấm **Làm mới phiên thực hành**. Chỉ dọn dữ liệu/queue cửa hàng; PDF cũ, thư Mailpit và topic Kafka cũ được giữ, không còn liên kết từ phiên mới. Reset đổi generation topic; retention không tự xóa topic. Lab v3 có DB/namespace và nút reset riêng.
 
 ```powershell
 docker compose --profile kafka down
 ```
 
-Lệnh dừng giữ dữ liệu broker trong Docker volumes, dữ liệu ứng dụng ở `data/`. API khởi động lại **không tự purge queue**. Khi mở lại, thêm worker để xử lý backlog còn lại. Chỉ chạy một web container/process cho bộ điều khiển worker cục bộ này.
+Lệnh dừng giữ volume và `data/`. Lần sau thêm consumer để xử lý backlog. Web không tự mở worker sau restart.
 
-## Đọc code theo luồng chạy
-
-| File | Vai trò |
+| Lỗi | Cách xử lý |
 |---|---|
-| `app.py` | API nhận job, HTTP 202/503, mở và dừng worker |
-| `broker.py` | Direct exchange, binding, queue durable, persistent message, mandatory publish |
-| `producer.py` | Producer CLI dùng cùng queue với dashboard |
-| `worker.py` | basic_consume, prefetch=1, ACK/NACK, crash thật |
-| `store.py` | Hóa đơn và log SQLite, UNIQUE(job_id), transaction chống hiệu ứng trùng |
-| `kafka_lab.py` | Publish và đọc lại log Kafka thật bằng hai group |
-| `worker2.py` | Entry point tương thích gọi Kafka lab mới |
-| `static/lab.js`, `static/lab.css` | Dashboard tiếng Việt, không tải thư viện frontend bên ngoài |
+| Docker cannot connect | Mở Docker Desktop, đợi Engine |
+| Cổng đã dùng | `docker ps`, dừng bản cũ hoặc đổi cổng `.env` |
+| Đơn có, PDF chưa có | Thêm consumer **Tạo hóa đơn PDF**, kiểm tra outbox/Ready |
+| Có PDF, chưa có email | Thêm consumer **Gửi email**, kiểm tra `docker compose ps mailpit` và DLQ |
+| Kafka chưa có partition | Với 4 worker/2 partition, 2 worker rảnh là đúng; nếu tất cả chưa có, bật profile và chờ rebalance |
+| Outbox pending lâu | `docker compose ps`; `docker compose logs --tail 40 web rabbitmq kafka` |
+| Reset bị từ chối | Dừng worker liên quan, đợi consumer count cập nhật |
 
-Queue `seminar.v3.invoices` là classic queue trên **một broker**. Demo chưa có replication/HA. DLX khai báo bằng arguments cho dễ mang đi học; hệ thống thực thường dùng policy để dễ thay đổi. Classic dead-lettering có giới hạn an toàn khi chặng đích lỗi. Không gọi cấu hình này là “không bao giờ mất tin”.
+## Tài liệu và kiểm chứng
 
-## Chạy CLI để xem ít dòng code hơn
+- [Bản PDF để in: cách chạy, lời thuyết trình, giải thích code và Kafka](docs/Huong_Dan_Demo_Cua_Hang_RabbitMQ.pdf). Tạo lại từ Markdown bằng `python tests/build_shop_guide.py` trong môi trường có requirements.
+- [Kịch bản cửa hàng trong 15–20 phút](docs/DEMO_CUA_HANG.md).
+- [Giải thích code theo từng bước](docs/GIAI_THICH_CUA_HANG.md).
+- [So sánh Kafka và phạm vi kết luận](docs/SO_SANH_KAFKA.md).
+- [Nguồn chính thức RabbitMQ, Kafka, Pika](docs/TAI_LIEU_HOC.md).
+- [Chạy kiểm thử](tests/README.md).
 
-Sau khi khởi động Docker:
-
-```powershell
-docker compose exec web python producer.py --count 3 --seconds 3
-```
-
-Ở terminal thứ hai:
-
-```powershell
-docker compose exec web python worker.py CLI-1
-```
-
-Nhấn Ctrl+C để dừng consumer CLI. CLI và web dùng **cùng queue**. Worker CLI xuất hiện trong consumer count/log; nó không nằm trong danh sách process do nút trên web quản lý.
-
-Nếu muốn chạy Python trực tiếp trên máy, dùng Python 3.12 và tạo môi trường riêng:
-
-```powershell
-docker compose stop web
-python -m venv .venv-seminar
-.\.venv-seminar\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv-seminar\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-Để tắt phiên Python dùng Ctrl+C. Không chạy đồng thời web container và API local trên cùng cổng hoặc cùng DB. Docker là cách khuyến nghị khi cả lớp thực hành.
-
-## Cập nhật bản clone
-
-Dừng các worker, đợi hết việc cần giữ rồi chạy:
-
-```powershell
-git pull --ff-only
-docker compose up -d --build --wait --wait-timeout 180
-```
-
-Nếu đang dùng Kafka, thêm `--profile kafka` vào lệnh Compose. Khi chuyển từ bản demo cũ sang bản mới, nên clone vào thư mục mới và dùng các cổng còn trống. Nếu đã sửa code trong bản clone, hãy lưu thay đổi đó trước khi pull.
-
-## Cấu hình cục bộ và đổi cổng
-
-Mặc định chạy ngay được, không cần `.env`. `.env.example` chỉ chứa giá trị demo công khai. Nếu cần đổi cổng, sao chép thành `.env` rồi sửa các giá trị tương ứng:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Trên macOS/Linux dùng `cp .env.example .env`. Ví dụ `WEB_PORT=8080` thì mở `http://localhost:8080`. Cổng trong container vẫn giữ nguyên. Nếu đổi cổng Management, dùng cổng đã đặt khi mở trang quản trị; liên kết nhanh trên web dùng cổng mặc định. Đổi user/password RabbitMQ chỉ có hiệu lực khởi tạo với volume dữ liệu mới; không tự đổi tài khoản trong volume cũ.
-
-Không commit `.env`, mật khẩu thật, token hay database. Repo chỉ chứa code, cấu hình mẫu và tài liệu. `guest/guest` là tài khoản demo cục bộ, các cổng chỉ lắng nghe trên 127.0.0.1.
-
-## Lỗi thường gặp
-
-| Hiện tượng | Kiểm tra và xử lý |
-|---|---|
-| `docker` chưa có / cannot connect daemon | Cài và mở Docker Desktop, đợi Engine khởi động |
-| Cổng bị chiếm | `docker ps`; dừng demo cũ hoặc ứng dụng dùng cùng cổng |
-| Web chưa mở ngay sau up | `docker compose ps`, `docker compose logs --tail 30 web`; đợi khởi động xong |
-| HTTP 503 lúc gửi job | Broker chưa sẵn sàng hoặc chưa xác định được kết quả publish; kiểm tra log/job_id trước khi gửi lại |
-| Ready/Unacked hiển thị trễ | Số đếm broker lấy mẫu theo chu kỳ; đợi vài giây, đối chiếu Management |
-| Worker đã dừng nhưng job còn processing | Đây là quan sát cuối của ứng dụng; bật worker mới để broker giao lại |
-| Không thấy job cũ trên bảng | Bảng hiển thị 100 job mới nhất, tổng hóa đơn vẫn đếm toàn DB |
-| Kafka lỗi kết nối | Bật profile kafka, đợi broker sẵn sàng, xem `docker compose logs --tail 30 kafka` |
-| Reset bị từ chối | Dừng tất cả worker web và CLI trước |
-
-## Tài liệu kèm theo
-
-- [Kịch bản nói và thao tác trong 18 phút](docs/KICH_BAN_SEMINAR.md)
-- [Nguồn chính thức, lộ trình học và câu hỏi tự kiểm tra](docs/TAI_LIEU_HOC.md)
-- [Hướng dẫn clone và chạy để chia sẻ cho lớp](docs/Huong_Dan_Clone_Va_Chay_Demo_SOA.docx)
-- [Kiểm thử với broker thật](tests/README.md)
+Word **Huong_Dan_Clone_Va_Chay_Demo_SOA.docx** và **KICH_BAN_SEMINAR.md** trước đây hướng dẫn lab v3 tại `/lab`; dùng hướng dẫn cửa hàng cho giao diện mới. Ảnh sản phẩm lấy từ bộ ảnh có sẵn trong dự án. PDF nhúng DejaVu Sans; giữ giấy phép ở `static/fonts/LICENSE-DejaVu.txt`.

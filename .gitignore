@@ -65,6 +65,7 @@ data/
 output/
 tmp/
 test-results/
+.playwright-cli/
 static/img/
 docs/THAY_DOI_VA_PHAM_VI.md
 *.sqlite3-shm

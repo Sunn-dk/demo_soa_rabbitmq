@@ -6,6 +6,7 @@ data
 output
 tmp
 test-results
+.playwright-cli
 docs
 tests
 static/img

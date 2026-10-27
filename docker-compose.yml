@@ -25,6 +25,10 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
       KAFKA_BOOTSTRAP: kafka:19092
+      SHOP_SMTP_HOST: mailpit
+      SHOP_SMTP_PORT: 1025
+      MAILPIT_WEB_PORT: ${MAILPIT_WEB_PORT:-8025}
+      MANAGEMENT_PORT: ${MANAGEMENT_PORT:-15672}
     volumes:
       - ./data:/lab/data
     depends_on:
@@ -36,6 +40,17 @@ services:
       timeout: 3s
       retries: 30
       start_period: 5s
+
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    ports:
+      - "127.0.0.1:${MAILPIT_WEB_PORT:-8025}:8025"
+      - "127.0.0.1:${SMTP_PORT:-1025}:1025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: 500
+    volumes:
+      - mail-data:/data
 
   kafka:
     image: apache/kafka:4.2.0
@@ -69,3 +84,4 @@ services:
 volumes:
   rabbit-data:
   kafka-data:
+  mail-data:

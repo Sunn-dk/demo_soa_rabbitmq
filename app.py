@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from typing import Annotated
 import broker
 import store
+import shop_api
 
 ROOT = Path(__file__).parent
 PROCESSES = {}
@@ -34,7 +35,11 @@ def stop_worker(name):
 @asynccontextmanager
 async def lifespan(app):
     store.init()
-    yield
+    await shop_api.startup()
+    try:
+        yield
+    finally:
+        await shop_api.shutdown()
     for name in list(PROCESSES):
         if PROCESSES[name].poll() is None:
             stop_worker(name)
@@ -42,6 +47,7 @@ async def lifespan(app):
 
 app = FastAPI(title='RabbitMQ Seminar Lab', version='3.0', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
+app.include_router(shop_api.router)
 
 
 class JobRequest(BaseModel):
@@ -55,6 +61,11 @@ class JobRequest(BaseModel):
 @app.get('/', include_in_schema=False)
 def index():
     return FileResponse(ROOT / 'index.html')
+
+
+@app.get('/lab', include_in_schema=False)
+def legacy_lab():
+    return FileResponse(ROOT / 'static' / 'legacy.html')
 
 
 @app.get('/health', include_in_schema=False)

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RabbitMQ · Seminar Lab</title><link rel="stylesheet" href="/static/lab.css"></head>
+<body>
+<header><div><span class="eyebrow">SOA / SEMINAR THỰC HÀNH</span><h1>Nhận việc trước.<br>Xử lý sau.</h1><p>RabbitMQ · Message queues · Producer–consumer · Giao tiếp bất đồng bộ</p></div><div class="connection"><span id="connection">Đang kết nối…</span><a href="http://localhost:15672" target="_blank" rel="noopener">Mở RabbitMQ Management ↗</a><a href="/docs" target="_blank" rel="noopener">API & Swagger ↗</a></div></header>
+<main>
+<nav aria-label="Thí nghiệm"><button data-step="0" class="selected">01 Bất đồng bộ</button><button data-step="1">02 Chia việc</button><button data-step="2">03 Giao lại & trùng</button><button data-step="3">04 Tin lỗi / DLQ</button><button data-step="4">05 Kafka replay</button></nav>
+<section class="experiment"><div><span class="eyebrow" id="step-label">THÍ NGHIỆM 01</span><h2 id="step-title"></h2><p id="step-description"></p></div><ol id="instructions"></ol></section>
+<section class="controls" aria-label="Điều khiển thí nghiệm">
+<label>Thời gian nghiệp vụ giả lập <select id="seconds"><option value="3">3 giây / job</option><option value="6">6 giây / job</option><option value="1">1 giây / job</option><option value="0">0 giây / job</option></select></label>
+<div class="buttons"><button id="send" class="primary">Gửi 1 job qua RabbitMQ</button><button id="burst">Gửi 6 job</button><button id="ordering">Thứ tự: gửi 6s rồi 1s</button><button id="sync">HTTP đồng bộ (đối chứng)</button><button id="add">+ Thêm worker</button></div>
+<div class="buttons secondary"><button id="poison">Gửi job lỗi</button><button id="commit-crash">Sập sau COMMIT, trước ACK</button><button id="retry">Sửa & gửi lại DLQ</button><button id="reset">Reset dữ liệu demo</button></div>
+<p class="note">Độ chậm được cố ý thêm vào phần xử lý nghiệp vụ để quan sát. Các phép đo HTTP dưới đây không phải độ trễ riêng của broker.</p>
+<div id="response" role="status">Bắt đầu với 0 worker. Gửi job rồi quan sát Ready tăng.</div>
+</section>
+<section class="flow" aria-label="Luồng xử lý"><div><small>PRODUCER</small><strong>HTTP API</strong><span>202 sau publisher confirm</span></div><b class="arrow">→</b><div><small>DIRECT EXCHANGE</small><strong>seminar.v3.tasks</strong><span>key = invoice.create</span></div><b class="arrow">→</b><div class="queue"><small>QUEUE TRÊN BROKER</small><strong id="ready">—</strong><span>Ready · chờ nhận</span></div><b class="arrow">→</b><div><small>CONSUMER</small><strong id="unacked">—</strong><span>Unacked · chờ ACK</span></div><b class="arrow">→</b><div><small>HIỆU ỨNG NGHIỆP VỤ</small><strong id="effects">0</strong><span>Hóa đơn trong SQLite</span></div></section>
+<div class="broker-note"><span id="counts-source">Số đếm lấy từ RabbitMQ Management API, cập nhật theo chu kỳ lấy mẫu.</span><span>DLQ trên broker: <b id="dlq">—</b> · Consumer: <b id="consumer-count">—</b></span></div>
+<details class="message-inspector" open><summary>Message cụ thể: bấm Job ID trong bảng để xem</summary><pre id="message-body">Body: JSON được mã hóa UTF-8 thành byte.
+Properties: message_id, content_type, delivery_mode.
+Publish: exchange, routing_key, mandatory.
+
+RabbitMQ vận chuyển payload, không tự hiểu các bước nghiệp vụ trong JSON.</pre></details>
+<section class="workers-section"><div class="section-heading"><h2>Worker là tiến trình riêng</h2><span>Bấm “Dừng / crash” khi đang xử lý để quan sát redelivery</span></div><div id="workers" class="workers"></div></section>
+<section class="evidence"><div><div class="section-heading"><h2>Theo dõi từng job</h2><span>Nhật ký ứng dụng, tối đa 100 job gần nhất</span></div><div class="table-scroll"><table><thead><tr><th>Job ID</th><th>Trạng thái</th><th>Worker</th><th>Lượt nhận</th><th>Giao lại</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div><p class="note">“processing” là quan sát cuối của ứng dụng. Nếu worker đã dừng, tin có thể đang chờ broker giao lại. Kiểm tra Ready/Unacked ở trên.</p></div><div><div class="section-heading"><h2>Dấu vết message</h2><span>Mới nhất ở trên</span></div><div id="events" class="events"></div></div></section>
+<section class="kafka"><div><span class="eyebrow">ĐỐI CHIẾU VỚI KAFKA THẬT</span><h2>Commit offset có xóa dữ liệu?</h2><p>Gửi 6 sự kiện vào topic 3 partition. Group A đọc và commit. Group B mới đọc lại cùng các sự kiện từ đầu.</p><button id="kafka-run" class="primary">Chạy thí nghiệm Kafka replay</button><p class="note">Cần bật profile kafka. Mỗi lần tạo topic riêng, retention 1 giờ. Không phải phép đo hiệu năng.</p></div><pre id="kafka-result">docker compose --profile kafka up -d
+
+Phạm vi: Consumer Groups truyền thống.
+Kafka còn có Share Groups, khác cơ chế đang demo.
+RabbitMQ Streams cũng có thể lưu log và replay.
+
+Chọn công cụ theo bài toán, cấu hình và vận hành.</pre></section>
+<footer>Demo cục bộ · Classic queue, 1 broker · SQLite dùng chung để quan sát & chứng minh idempotency · <a href="https://www.rabbitmq.com/tutorials/tutorial-two-python" target="_blank" rel="noopener">Tài liệu Work Queues chính thức ↗</a></footer>
+</main><script src="/static/lab.js"></script></body></html>
