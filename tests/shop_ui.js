@@ -18,7 +18,7 @@ async page => {
   await page.locator('#order-detail [data-invoice]').click();
   await page.locator('#invoice-dialog[open]').waitFor();
   const receipt=await page.locator('#invoice-preview').innerText();
-  if(!receipt.includes('Khách kiểm tra giao diện') || !receipt.includes('274.000'))throw Error('Receipt missing details');
+  if(!receipt.includes(data.order_id) || !receipt.includes('Khách kiểm tra giao diện') || !receipt.includes('274.000'))throw Error('Receipt missing details or selected the wrong order');
   await page.screenshot({path:'test-results/shop-receipt.png'});
   await page.getByRole('button',{name:'Đóng hóa đơn',exact:true}).click();
   await page.getByRole('button',{name:'Phòng vận hành',exact:true}).click();
