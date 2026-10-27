@@ -5,6 +5,7 @@
 *.html text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
+*.txt text eol=lf
 Dockerfile text eol=lf
 *.cmd text eol=crlf
 *.docx binary
