@@ -28,6 +28,7 @@ MANIFEST
 
 # Virtual Environments
 .venv/
+.venv*/
 venv/
 ENV/
 env/
@@ -59,3 +60,12 @@ desktop.ini
 *.log
 *.sqlite
 *.sqlite3
+data/
+.seminar-build/
+output/
+tmp/
+test-results/
+static/img/
+docs/THAY_DOI_VA_PHAM_VI.md
+*.sqlite3-shm
+*.sqlite3-wal

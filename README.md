@@ -1,287 +1,156 @@
-# 🐇 FlashOrder Pro — RabbitMQ vs Kafka Side-by-Side Demo
+# RabbitMQ Seminar Lab
 
-> Dự án minh hoạ kiến trúc **Message Broker** trong **SOA / Microservices** bằng cách xây dựng một sản phẩm thực tế: hệ thống đặt hàng & điều phối kho vận bất đồng bộ dùng **RabbitMQ**, kết hợp bảng đối chiếu trực quan những hạn chế của **Apache Kafka** khi áp dụng vào bài toán Task Queue tương tự.
+Bài thực hành SOA trong 15–20 phút: nhìn thấy message đi qua producer, exchange, queue và consumer. Giao diện dùng RabbitMQ thật, worker là tiến trình riêng. Kafka là phần mở rộng về replay, không phải mô phỏng bất lợi cho Kafka.
 
----
+## Chạy nhanh trên máy của bạn
 
-## 📐 Kiến trúc tổng quan
-
-```
-[Trình duyệt / Swagger UI]
-          │ HTTP REST
-          ▼
- ┌─────────────────────────┐
- │  FastAPI (Producer)     │ ─── Gửi message ──▶ RabbitMQ Broker ──▶ Worker Threads
- │  app.py  (cổng 8000)    │                    (Priority Queue,       (ACK / NACK)
- │  producer.py (cổng 8001)│                     DLQ, Persistence)
- └─────────────────────────┘
-          │                      ┌──────────────────────────────┐
-          └── Gửi message ──────▶│ Apache Kafka (Cổng 9092)     │
-                                 │ (Minh hoạ: FIFO Offset Log,  │
-                                 │  Head-of-Line Blocking,       │
-                                 │  giới hạn Partition)          │
-                                 └──────────────────────────────┘
-```
-
-### Bảng đối chiếu hai chiều: RabbitMQ vs Apache Kafka
-
-| Tiêu chí | 🐇 RabbitMQ (Message Broker) | 🐘 Apache Kafka (Event Streaming Log) |
-|:---|:---|:---|
-| **Bản chất kiến trúc** | **Smart Broker / Dumb Consumer**: Broker quản lý trạng thái, routing, xóa tin khi ACK | **Dumb Broker / Smart Consumer**: Broker chỉ ghi Append-only Log, Consumer tự quản lý Offset |
-| **Độ ưu tiên (Priority)** | ✅ **Native `x-max-priority`**: Đơn VIP tự động nhảy hàng lên đầu Queue | ❌ **Không hỗ trợ native**: Bắt buộc đọc tuần tự FIFO theo Offset |
-| **Xử lý tin lỗi (Poison Pill)** | ✅ **Per-message NACK**: Đơn lỗi tự nhảy sang Dead Letter Queue, không chặn luồng | ❌ **Head-of-Line Blocking**: Kẹt cứng tại Offset lỗi nếu không tự code bỏ qua |
-| **Mở rộng Worker (Scale)** | ✅ **Tự do tuyệt đối**: Bao nhiêu Consumer cùng lắng nghe 1 Queue cũng được (Fair Dispatch) | ⚠️ **Khóa cứng theo Partition**: Số Consumer tối đa = Số Partition (thừa sẽ IDLE) |
-| **Độ tin cậy (Delivery)** | ✅ **At-least-once** (hoặc At-most-once tùy cờ ACK/NACK từng tin) | ✅ **At-least-once** / Exactly-once (Transactional Producer + Idempotent Consumer) |
-| **Lưu trữ dữ liệu (Retention)**| 🗑️ **Tạm thời**: Tin nhắn bị xóa ngay sau khi Consumer gửi ACK thành công | 💾 **Lâu dài / Vĩnh viễn**: Giữ log nhiều ngày/tháng, cho phép **Replay** dữ liệu cũ |
-| **Thông lượng (Throughput)** | ⚡ Hàng chục nghìn msg/giây (Tối ưu độ trễ microsecond/millisecond) | 🚀 **Hàng triệu msg/giây** (Tối ưu nhờ Sequential I/O, Page Cache, Zero-copy) |
-| **Khi nào nên chọn?** | **Task Queue, Order Processing, RPC, hệ thống cần định tuyến phức tạp** | **Big Data, Event Sourcing, Log Aggregation, Clickstream, IoT Stream** |
-
----
-
-## 🏛️ Kiến trúc AMQP 0-9-1 & 4 Loại Exchange trong RabbitMQ
-
-Trong chuẩn **AMQP 0-9-1**, Producer **không bao giờ gửi trực tiếp vào Queue**, mà luôn gửi tới một **Exchange**. Exchange phân phối tin nhắn vào các Queue dựa trên **Binding Rule** và **Routing Key**:
-
-```
-[Producer] ──(Message + Routing Key)──▶ [Exchange]
-                                             │
-                       ┌─────────────────────┼─────────────────────┐
-             (Binding: "key_A")    (Binding: "key_B")    (Binding: "key_*")
-                       ▼                     ▼                     ▼
-                  [Queue A]              [Queue B]             [Queue C]
-                       │                     │                     │
-                       ▼                     ▼                     ▼
-                  [Consumer]            [Consumer]            [Consumer]
-```
-
-### 4 Loại Exchange phổ biến:
-
-| Loại Exchange | Cơ chế định tuyến | Use case thực tế trong SOA / Microservices |
-|:---|:---|:---|
-| **Direct** *(Dự án dùng)* | Khớp chính xác 100% giữa `routing_key` và `binding_key` | Điều phối tác vụ định danh cụ thể (1-to-1): Xử lý đơn hàng, gửi SMS OTP |
-| **Fanout** | Bỏ qua routing key, sao chép tin broadcast tới **tất cả Queue** được bind | Publish/Subscribe: Đơn hàng mới kích hoạt đồng thời Email, Kho vận, Analytics |
-| **Topic** | Khớp mẫu linh hoạt với ký tự đại diện: `*` (1 từ), `#` (0 hoặc nhiều từ) | Định tuyến đa vùng, đa kênh: `order.vietnam.vip`, `order.*.urgent`, `order.#` |
-| **Headers** | Định tuyến dựa trên các cặp key-value trong Message Header | Định tuyến khi tiêu chí không thể biểu diễn bằng chuỗi ký tự đơn giản |
-
----
-
-## 🛡️ Độ tin cậy (Delivery Guarantees) & Mẫu Idempotent Consumer
-
-### 1. Delivery Semantics trong RabbitMQ:
-- **At-most-once (`auto_ack=True`):** Broker xóa tin nhắn ngay khi vừa gửi đi. Nếu Worker gặp sự cố/sập nguồn giữa chừng thì **mất dữ liệu vĩnh viễn**.
-- **At-least-once (`auto_ack=False` - Manual ACK):** Broker chỉ xóa tin nhắn sau khi nhận được `basic_ack`. Nếu Worker sập nguồn (như kịch bản "Giả lập Sập nguồn"), RabbitMQ **tự động Requeue tin nhắn** cho Worker khác làm lại.
-
-### 2. Giải bài toán trùng lặp khi Requeue (Idempotent Consumer):
-Khi một tin nhắn bị Requeue do Worker trước crash lúc đang thực hiện dở, có nguy cơ khách hàng bị **trừ tiền hoặc xuất kho 2 lần**. Trong kiến trúc SOA, Consumer bắt buộc phải áp dụng mẫu **Idempotent**:
-1. **Redis Lock / Cache:** Gọi `SET order_id PENDING NX EX 300`. Nếu đã tồn tại key thì từ chối xử lý lại.
-2. **Database Unique Constraint:** Đặt khoá `UNIQUE` cho trường `order_id` trong bảng giao dịch.
-3. **State Machine:** Chỉ thực thi nếu trạng thái đơn hàng là `NEW/PENDING`. Nếu đã là `PROCESSED` thì bỏ qua và gửi ngay `ACK`.
-
----
-
-## 📂 Cấu trúc thư mục
-
-```
-demo_soa_rabbitmq/
-│
-├── .vscode/
-│   └── settings.json           # Trỏ interpreter về .venv (không dùng ${workspaceFolder})
-├── docker-compose.yml          # Khởi chạy RabbitMQ (5672/15672) + Kafka KRaft (9092)
-├── requirements.txt            # fastapi, uvicorn, pika, confluent-kafka, pydantic
-│
-├── ── PHẦN 1: Giới thiệu Code Kỹ thuật (Terminal + Swagger) ──────────
-├── producer.py                 # FastAPI Swagger API (cổng 8001)
-│                               #   → Gửi đồng thời vào cả RabbitMQ & Kafka
-│                               #   → 4 kịch bản demo: async, priority, DLQ, scaling
-├── worker.py                   # RabbitMQ Consumer thuần
-│                               #   → basic_qos, basic_ack, basic_nack → DLQ
-│                               #   → Đơn VIP nhảy hàng (Priority Queue)
-├── worker2.py                  # Kafka Consumer thuần
-│                               #   → Poll theo Offset (FIFO), bị kẹt đơn lỗi
-│                               #   → Worker thừa in cảnh báo IDLE
-│
-├── ── PHẦN 2: Sản phẩm Web Dashboard (trình diễn chính) ─────────────
-├── app.py                      # FastAPI Backend (cổng 8000) — kết nối RabbitMQ thật
-│                               #   → Worker thread nội bộ: basic_get + ACK/NACK
-│                               #   → API đầy đủ: đặt hàng, thêm trạm, crash, DLQ retry
-├── index.html                  # Giao diện Web thời gian thực (TailwindCSS + Font Awesome)
-│                               #   → 4 khu vực: Đặt hàng, Queue, Workers, Kafka đối chiếu
-│
-├── .venv/                      # Môi trường ảo Python (không commit vào Git)
-└── README.md                   # Tài liệu này
-```
-
----
-
-## 🛠️ Yêu cầu môi trường
-
-| Thành phần | Phiên bản |
-|:---|:---|
-| **Docker Desktop** | Bất kỳ (cần Docker Engine đang chạy) |
-| **Python** | 3.10+ |
-| **RAM** | ≥ 4GB (Docker cần ~2GB cho RabbitMQ + Kafka) |
-
----
-
-## 🚀 Cài đặt từ A–Z
-
-### Bước 1 — Khởi động Broker bằng Docker Compose
+1. Cài [Docker Desktop](https://docs.docker.com/get-started/introduction/get-docker/). Windows dùng Linux containers/WSL 2 theo hướng dẫn của Docker. macOS/Linux dùng Docker Engine và Compose tương ứng.
+2. Mở Docker Desktop và đợi Engine chạy. Cài [Git](https://git-scm.com/downloads), sau đó mở PowerShell/Terminal và clone:
 
 ```powershell
-# Tại thư mục dự án
-docker compose up -d
-
-# Kiểm tra 2 container đang chạy
-docker ps
+git clone https://github.com/Sunn-dk/demo_soa_rabbitmq.git
+cd demo_soa_rabbitmq
 ```
 
-Bạn sẽ thấy:
-- `demo-rabbitmq` — cổng `5672` (AMQP) và `15672` (Admin UI)
-- `demo-kafka` — cổng `9092` (KRaft, không cần Zookeeper)
-
-**RabbitMQ Admin UI:** [http://localhost:15672](http://localhost:15672)
-
----
-
-### Bước 2 — Tạo môi trường ảo & cài thư viện
+3. Khởi động RabbitMQ và web, đợi cả hai báo healthy:
 
 ```powershell
-# Tạo venv nếu chưa có
-python -m venv .venv
-
-# Kích hoạt
-.\.venv\Scripts\Activate.ps1
-
-# Cài đặt tất cả thư viện
-pip install -r requirements.txt
+docker compose up -d --build --wait --wait-timeout 180
 ```
 
-> **Tip VS Code:** Nếu thấy gạch đỏ dưới `pika` hoặc `confluent_kafka`, nhấn `Ctrl+Shift+P` → `Python: Select Interpreter` → chọn `.venv\Scripts\python.exe`.
+4. Mở [dashboard](http://localhost:8000). Ban đầu có **0 worker** để chứng minh bất đồng bộ. Bấm **Gửi 1 job qua RabbitMQ**, đợi số Ready cập nhật, rồi bấm **+ Thêm worker**.
 
----
+Không cần cài Python/Node trên máy nếu chạy bằng Docker. Lần đầu cần Internet để tải image và thư viện. Có thể bấm `start-demo.cmd` trên Windows thay cho gõ lệnh. Nếu cổng 8000/5672/15672 đã có ứng dụng khác sử dụng, dừng bản demo cũ trước.
 
-## ▶️ Cách 1 — Chạy Sản phẩm Web Dashboard (Khuyên dùng khi thuyết trình)
+Hướng dẫn Word để tải về hoặc gửi cho người học: [Hướng dẫn clone và chạy demo](docs/Huong_Dan_Clone_Va_Chay_Demo_SOA.docx).
+
+| Địa chỉ | Mục đích |
+|---|---|
+| http://localhost:8000 | Demo và hướng dẫn thao tác ngay trên web |
+| http://localhost:8000/docs | API để cả lớp thử lại |
+| http://localhost:15672 | RabbitMQ Management, `guest` / `guest` |
+
+Các cổng được bind vào 127.0.0.1 để chạy trên từng máy. Mỗi bạn chạy bản riêng, không cần truy cập máy của người thuyết trình.
+
+## Những thí nghiệm cần làm
+
+| Thí nghiệm | Thao tác | Bằng chứng cần chỉ ra |
+|---|---|---|
+| Bất đồng bộ | 0 worker, gửi 1 job | HTTP 202 sau confirm, Ready tăng, hóa đơn chưa có |
+| Message cụ thể | Bấm Job ID trong bảng | Body, properties, exchange, routing key của cùng ID |
+| Chia việc | Gửi 6 job, thêm worker thứ hai | Hai job processing trên hai worker khác nhau |
+| Thứ tự | 2 worker rảnh, queue trống, bấm **Thứ tự: gửi 6s rồi 1s** | Job gửi sau hoàn tất trước; FIFO không tự điều phối phụ thuộc nghiệp vụ |
+| Worker sập | Job 6 giây, bấm Dừng/crash khi processing | REDELIVER, cùng ID, lượt nhận tăng |
+| Sập sau ghi DB | Giữ 1 worker, bấm **Sập sau COMMIT, trước ACK**, sau đó thêm worker mới | COMMIT, CRASH_BEFORE_ACK, REDELIVER, DEDUP; 2 lượt nhận nhưng 1 hóa đơn |
+| Tin lỗi | Gửi job lỗi rồi job thường | NACK, DLQ tăng, job thường vẫn chạy; sửa và retry được |
+| Kafka replay | Bật Kafka, chạy lab cuối trang | Group B đọc lại 6 event đã được group A đọc và commit |
+
+Thời gian 1/3/6 giây là **nghiệp vụ cố ý làm chậm**, không phải RabbitMQ mất từng đó thời gian để truyền tin. Chỉ số HTTP đo cả kết nối, khai báo topology, publish confirm và ghi log. Không dùng nó để kết luận RabbitMQ nhanh hơn Kafka.
+
+Ready/Unacked/DLQ lấy từ Management API, có độ trễ lấy mẫu vài giây. Bảng job và event log là quan sát ứng dụng, không phải bản sao chính xác tức thời của bộ nhớ broker. Trạng thái `processing` còn có thể là quan sát cuối trước khi worker sập.
+
+## Bật phần Kafka (tùy chọn)
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app:app --reload --port 8000
+docker compose --profile kafka up -d --wait --wait-timeout 240
 ```
 
-Mở trình duyệt: **[http://localhost:8000](http://localhost:8000)**
+Đợi Kafka khởi động, sau đó bấm **Chạy thí nghiệm Kafka replay**. Mỗi lần tạo topic riêng, 3 partition, 6 event, retention 1 giờ. Group A đọc và commit, group B mới dùng `earliest` đọc lại. Đợi khoảng vài đến vài chục giây, không bấm liên tục. Topic vẫn tồn tại sau khi dữ liệu hết retention.
 
-### Kịch bản trình diễn 4 bước (≈ 5 phút):
+Kafka lab dùng **Consumer Groups truyền thống**. Kafka Share Groups là một cơ chế khác có chia sẻ record và ACK từng record. RabbitMQ cũng có Streams để lưu log và replay. Xem [tài liệu học](docs/TAI_LIEU_HOC.md) để tránh khái quát sai.
 
-| Bước | Thao tác | Quan sát |
-|:---|:---|:---|
-| **① Priority Queue** | Bấm **"Combo Flash Sale"** | 4 đơn thường vào trước, đơn 👑 VIP vào cuối nhưng **nhảy lên đầu Queue ngay lập tức** |
-| **② Dead Letter Queue** | Bấm **"Bắn 1 Đơn Lỗi"** | Đơn bị `NACK` → vào ô **DLQ**, các đơn hợp lệ phía sau vẫn chạy bình thường |
-| **③ Scale Worker** | Bấm **"Thêm Trạm Worker"** 2-3 lần | Các trạm chia việc song song, Queue giải phóng nhanh gấp đôi |
-| **④ Fault Tolerance** | Bấm **"Giả lập Sập nguồn"** | Đơn đang xử lý dở bị thu hồi, tự động quay về Queue cho trạm khác làm tiếp |
+## Reset và dừng
 
-> **Đồng thời quan sát** bảng **"Đối chiếu Kafka"** phía dưới: cùng 1 luồng đơn, Kafka phải xử lý tuần tự theo Offset và bị kẹt khi gặp đơn lỗi.
-
----
-
-## 🔬 Cách 2 — Demo Code Kỹ thuật (Terminal Side-by-Side + Swagger)
-
-Dành cho trình bày chi tiết nguyên lý code với `worker.py` & `worker2.py` song song trên Terminal.
-
-> **Lưu ý:** `app.py` (cổng 8000) dùng queue riêng (`flashorder_*`) nên **bạn có thể bật cả hai cùng lúc** mà không bị xung đột.
-
-#### Terminal 1 — Producer Swagger API (cổng 8001)
+Để reset từ web, dừng mọi worker bằng nút Dừng/crash, chờ broker nhận mất kết nối, sau đó bấm **Reset dữ liệu demo**. Nếu còn worker CLI thì dừng terminal đó. Reset chỉ dọn queue `seminar.v3.invoices`, DLQ tương ứng và SQLite của demo, không dọn queue khác.
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn producer:app --reload --port 8001
+docker compose --profile kafka down
 ```
 
-→ Mở Swagger UI: [http://localhost:8001/docs](http://localhost:8001/docs)
+Lệnh dừng giữ dữ liệu broker trong Docker volumes, dữ liệu ứng dụng ở `data/`. API khởi động lại **không tự purge queue**. Khi mở lại, thêm worker để xử lý backlog còn lại. Chỉ chạy một web container/process cho bộ điều khiển worker cục bộ này.
 
-#### Terminal 2 — Worker RabbitMQ
+## Đọc code theo luồng chạy
+
+| File | Vai trò |
+|---|---|
+| `app.py` | API nhận job, HTTP 202/503, mở và dừng worker |
+| `broker.py` | Direct exchange, binding, queue durable, persistent message, mandatory publish |
+| `producer.py` | Producer CLI dùng cùng queue với dashboard |
+| `worker.py` | basic_consume, prefetch=1, ACK/NACK, crash thật |
+| `store.py` | Hóa đơn và log SQLite, UNIQUE(job_id), transaction chống hiệu ứng trùng |
+| `kafka_lab.py` | Publish và đọc lại log Kafka thật bằng hai group |
+| `worker2.py` | Entry point tương thích gọi Kafka lab mới |
+| `static/lab.js`, `static/lab.css` | Dashboard tiếng Việt, không tải thư viện frontend bên ngoài |
+
+Queue `seminar.v3.invoices` là classic queue trên **một broker**. Demo chưa có replication/HA. DLX khai báo bằng arguments cho dễ mang đi học; hệ thống thực thường dùng policy để dễ thay đổi. Classic dead-lettering có giới hạn an toàn khi chặng đích lỗi. Không gọi cấu hình này là “không bao giờ mất tin”.
+
+## Chạy CLI để xem ít dòng code hơn
+
+Sau khi khởi động Docker:
 
 ```powershell
-.\.venv\Scripts\python.exe worker.py Worker-1
+docker compose exec web python producer.py --count 3 --seconds 3
 ```
 
-#### Terminal 3 — Worker Kafka
+Ở terminal thứ hai:
 
 ```powershell
-.\.venv\Scripts\python.exe worker2.py Kafka-Worker-1
+docker compose exec web python worker.py CLI-1
 ```
 
-Đặt **Terminal 2 & 3 cạnh nhau**, sau đó trên Swagger bấm từng kịch bản:
+Nhấn Ctrl+C để dừng consumer CLI. CLI và web dùng **cùng queue**. Worker CLI xuất hiện trong consumer count/log; nó không nằm trong danh sách process do nút trên web quản lý.
 
-| Endpoint Swagger | Mục đích |
-|:---|:---|
-| `POST /0-reset-queues` | **Dọn sạch hàng đợi CLI** (`order_main_queue` & `dead_letter_queue`) để reset về 0 đơn |
-| `POST /1-async-single-order` | Minh hoạ API phản hồi < 100ms dù Worker cần 3s xử lý |
-| `POST /2-scenario-priority-queue` | **VIP-999 vào cuối #6/6 nhưng RabbitMQ bốc ra #1; Kafka bị ép làm #6** |
-| `POST /3-scenario-dlq-isolation` | **RabbitMQ cô lập đơn lỗi sang DLQ; Kafka kẹt cứng toàn luồng** |
-| `POST /4-scenario-free-scaling` | Mở thêm Worker: **RabbitMQ chia đều; Kafka thừa Worker ngồi chơi** |
-| `GET /5-amqp-exchange-types` | Tra cứu lý thuyết & bảng so sánh 4 loại AMQP Exchange (Direct, Fanout, Topic, Headers) |
-| `GET /6-reliability-and-idempotency` | Tra cứu lý thuyết At-least-once, rủi ro Requeue và mẫu thiết kế Idempotent Consumer |
-
-#### (Tùy chọn) Scale thêm Worker cho kịch bản 4:
+Nếu muốn chạy Python trực tiếp trên máy, dùng Python 3.12 và tạo môi trường riêng:
 
 ```powershell
-# Terminal 4: thêm Worker RabbitMQ thứ 2
-.\.venv\Scripts\python.exe worker.py Worker-2
-
-# Terminal 5: thêm Worker Kafka thứ 2 (sẽ thấy cảnh báo IDLE vì chỉ có 1 Partition)
-.\.venv\Scripts\python.exe worker2.py Kafka-Worker-2
+docker compose stop web
+python -m venv .venv-seminar
+.\.venv-seminar\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv-seminar\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
----
+Để tắt phiên Python dùng Ctrl+C. Không chạy đồng thời web container và API local trên cùng cổng hoặc cùng DB. Docker là cách khuyến nghị khi cả lớp thực hành.
 
-## ❓ Câu hỏi thường gặp & Quan sát RabbitMQ Admin UI (localhost:15672)
+## Cập nhật bản clone
 
-### 1. Tại sao RabbitMQ Admin báo `Ready: 16` nhưng Web lại báo "Hàng đợi trống"?
-> **Giải thích:** Dự án tách biệt 2 luồng Queue độc lập:
-> - **Web Dashboard (`app.py` cổng 8000)**: Dùng `flashorder_main_queue` — Web báo trống vì đơn hàng đã được Worker xử lý xong.
-> - **Kỹ thuật CLI (`producer.py` cổng 8001)**: Dùng `order_main_queue`. Khi bạn bấm các kịch bản test trên Swagger mà **chưa bật `worker.py`**, các tin nhắn sẽ nằm chờ sẵn trong `order_main_queue`.
-> 👉 **Cách xử lý:** Bật Worker để tiêu thụ: `.\.venv\Scripts\python.exe worker.py Worker-1`, hoặc bấm `POST /0-reset-queues` trên Swagger để dọn sạch.
-
-### 2. Terminal chạy `app.py` có bị ngập log `GET /api/state` không?
-> **Không:** Đã tích hợp sẵn `EndpointFilter` chặn 100% access log polling ngầm của frontend. Terminal chỉ hiển thị sự kiện nghiệp vụ thật: nhận đơn, đơn VIP nhảy hàng, Worker xuất kho ACK, đơn lỗi NACK và sập nguồn requeue.
-
----
-
-## 🛑 Dừng & Dọn dẹp
+Dừng các worker, đợi hết việc cần giữ rồi chạy:
 
 ```powershell
-# Nhấn Ctrl+C tại mỗi Terminal chạy Python
-
-# Dừng container
-docker compose down
-
-# Xóa cả volume (dữ liệu RabbitMQ/Kafka sẽ mất)
-docker compose down -v
+git pull --ff-only
+docker compose up -d --build --wait --wait-timeout 180
 ```
 
----
+Nếu đang dùng Kafka, thêm `--profile kafka` vào lệnh Compose. Khi chuyển từ bản demo cũ sang bản mới, nên clone vào thư mục mới và dùng các cổng còn trống. Nếu đã sửa code trong bản clone, hãy lưu thay đổi đó trước khi pull.
 
-## 🔧 Cấu hình kỹ thuật nhanh
+## Cấu hình cục bộ và đổi cổng
 
-| Thông số | Giá trị |
-|:---|:---|
-| RabbitMQ AMQP | `localhost:5672` |
-| RabbitMQ Admin | `localhost:15672` |
-| Kafka Bootstrap | `localhost:9092` |
-| Queue chính (Web) | `flashorder_main_queue` (x-max-priority: 10) |
-| DLQ (Web) | `flashorder_dlq` |
-| Queue chính (CLI) | `order_main_queue` (x-max-priority: 10) |
-| DLQ (CLI) | `dead_letter_queue` |
-| Kafka Topic | `order_kafka_topic` (1 Partition) |
-
-> Hai hệ thống Web (cổng 8000) và CLI (cổng 8001) dùng **queue tách biệt hoàn toàn**, bạn có thể chạy song song không lo xung đột.
-
----
-
-## 📋 Kiểm tra cú pháp nhanh
+Mặc định chạy ngay được, không cần `.env`. `.env.example` chỉ chứa giá trị demo công khai. Nếu cần đổi cổng, sao chép thành `.env` rồi sửa các giá trị tương ứng:
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile producer.py worker.py worker2.py app.py
-# Không có output = tất cả OK ✅
+Copy-Item .env.example .env
 ```
 
----
+Trên macOS/Linux dùng `cp .env.example .env`. Ví dụ `WEB_PORT=8080` thì mở `http://localhost:8080`. Cổng trong container vẫn giữ nguyên. Nếu đổi cổng Management, dùng cổng đã đặt khi mở trang quản trị; liên kết nhanh trên web dùng cổng mặc định. Đổi user/password RabbitMQ chỉ có hiệu lực khởi tạo với volume dữ liệu mới; không tự đổi tài khoản trong volume cũ.
 
-*Built for SOA / Microservices course demo — RabbitMQ 3.x + Apache Kafka 4.x (KRaft) + FastAPI 0.115+*
+Không commit `.env`, mật khẩu thật, token hay database. Repo chỉ chứa code, cấu hình mẫu và tài liệu. `guest/guest` là tài khoản demo cục bộ, các cổng chỉ lắng nghe trên 127.0.0.1.
+
+## Lỗi thường gặp
+
+| Hiện tượng | Kiểm tra và xử lý |
+|---|---|
+| `docker` chưa có / cannot connect daemon | Cài và mở Docker Desktop, đợi Engine khởi động |
+| Cổng bị chiếm | `docker ps`; dừng demo cũ hoặc ứng dụng dùng cùng cổng |
+| Web chưa mở ngay sau up | `docker compose ps`, `docker compose logs --tail 30 web`; đợi khởi động xong |
+| HTTP 503 lúc gửi job | Broker chưa sẵn sàng hoặc chưa xác định được kết quả publish; kiểm tra log/job_id trước khi gửi lại |
+| Ready/Unacked hiển thị trễ | Số đếm broker lấy mẫu theo chu kỳ; đợi vài giây, đối chiếu Management |
+| Worker đã dừng nhưng job còn processing | Đây là quan sát cuối của ứng dụng; bật worker mới để broker giao lại |
+| Không thấy job cũ trên bảng | Bảng hiển thị 100 job mới nhất, tổng hóa đơn vẫn đếm toàn DB |
+| Kafka lỗi kết nối | Bật profile kafka, đợi broker sẵn sàng, xem `docker compose logs --tail 30 kafka` |
+| Reset bị từ chối | Dừng tất cả worker web và CLI trước |
+
+## Tài liệu kèm theo
+
+- [Kịch bản nói và thao tác trong 18 phút](docs/KICH_BAN_SEMINAR.md)
+- [Nguồn chính thức, lộ trình học và câu hỏi tự kiểm tra](docs/TAI_LIEU_HOC.md)
+- [Hướng dẫn clone và chạy để chia sẻ cho lớp](docs/Huong_Dan_Clone_Va_Chay_Demo_SOA.docx)
+- [Kiểm thử với broker thật](tests/README.md)

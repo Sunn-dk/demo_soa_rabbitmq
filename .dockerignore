@@ -1,0 +1,15 @@
+.git
+.venv
+.venv*
+.seminar-build
+data
+output
+tmp
+test-results
+docs
+tests
+static/img
+.env
+.env.*
+__pycache__
+*.zip
