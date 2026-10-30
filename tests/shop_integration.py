@@ -51,6 +51,7 @@ def ensure(transport,role,count):
 def main():
     state=call('/state')
     self_assert(not any(w['alive'] for w in state['workers']),'Use a fresh disposable project, no active shop workers')
+    self_assert(state['totals']['orders']==0,'Use a fresh disposable database, do not run on orders you need to keep')
     call('/settings',{'seconds':.15})
     key=uuid.uuid4().hex;first=checkout(key);oid=first['order_id']
     self_assert(first['order']['total']==523000,'client price was trusted')
@@ -65,7 +66,8 @@ def main():
     self_assert(pdf.startswith(b'%PDF'),'invoice is not a PDF')
     evidence=Path('test-results');evidence.mkdir(exist_ok=True);(evidence/'shop-invoice.pdf').write_bytes(pdf)
     ensure('rabbitmq','email',1)
-    state=wait(lambda s:order(s,oid)['status']=='completed')
+    # Counters and order detail use separate reads; wait for both to settle.
+    state=wait(lambda s:order(s,oid)['status']=='completed' and s['totals']['invoices']==1 and s['totals']['emails']==1)
     with urlopen(MAIL+'/api/v1/messages') as response:messages=json.load(response)
     self_assert(messages['total']>=1,'Mailpit did not capture SMTP')
     number=order(state,oid)['invoice']['number']

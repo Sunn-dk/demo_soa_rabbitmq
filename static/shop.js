@@ -1,104 +1,723 @@
-'use strict';
-const $=id=>document.getElementById(id);
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=n=>Number(n||0).toLocaleString('vi-VN')+' đ';
-const short=id=>id?('DH-'+id.slice(-8).toUpperCase()):'—';
-const clock=ts=>new Date(ts*1000).toLocaleTimeString('vi-VN');
-const date=ts=>new Date(ts*1000).toLocaleString('vi-VN');
-const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let catalog=[],cart=[],state=null,category='Tất cả',tab='store',opsTransport='rabbitmq',selected=null,refreshing=false,toastTimer;
-let checkoutKey=null,scaleExperiment=localStorage.getItem('moc-scale-experiment'),errorExperiment=localStorage.getItem('moc-error-experiment');
-const statusLabels={pending:'Đã tiếp nhận',processing:'Đang tạo hóa đơn',invoice_ready:'Hóa đơn sẵn sàng',completed:'Đã gửi hóa đơn',needs_attention:'Cần xử lý thông tin'};
-const workerLabels={starting:'Đang mở tiến trình',connecting:'Đang kết nối',reconnecting:'Đang kết nối lại',idle:'Sẵn sàng nhận việc',rendering:'Đang tạo PDF',sending:'Đang gửi email',blocked:'Chờ xử lý lỗi',unassigned:'Chưa được giao partition',rebalancing:'Đang phân công lại',stopped:'Đã dừng'};
-function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6000);}
-async function api(url,body,method){const response=await fetch('/api/shop'+url,{method:method||(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return {data,status:response.status};}
-async function busy(button,fn){button.disabled=true;try{return await fn();}catch(error){toast(error.message,true);}finally{button.disabled=false;}}
-function empty(title,text=''){return `<div class="empty-state"><strong>${esc(title)}</strong>${esc(text)}</div>`;}
-function badge(order){return `<span class="badge ${order.status==='completed'?'ok':order.status==='needs_attention'?'error':'warn'}">${esc(statusLabels[order.status])}</span>`;}
-function changeTab(next){if(!['store','orders','operations','compare'].includes(next))return;if(next!==tab)window.scrollTo({top:0});tab=next;document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!=='view-'+tab);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));if(location.hash!=='#'+next)history.replaceState(null,'','#'+next);renderState();}
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>changeTab(b.dataset.tab));
-window.addEventListener('hashchange',()=>changeTab(location.hash.slice(1)));
-
-function renderCatalog(){
-  $('categories').innerHTML=['Tất cả',...new Set(catalog.map(p=>p.category))].map(c=>`<button class="${c===category?'active':''}" data-category="${esc(c)}">${esc(c)}</button>`).join('');
-  const products=catalog.filter(p=>category==='Tất cả'||p.category===category);
-  $('product-count').textContent=products.length+' sản phẩm';
-  $('products').innerHTML=products.map((p,i)=>`<article class="product-card"><div class="product-image"><img src="/static/products/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">${i<2?'<span class="product-tag">EVERYDAY ESSENTIAL</span>':''}</div><div class="product-info"><div class="product-top"><h3>${esc(p.name)}</h3><span class="price">${money(p.price)}</span></div><p>${esc(p.color)}</p><div class="product-actions"><select id="size-${esc(p.sku)}" aria-label="Kích cỡ ${esc(p.name)}">${p.sizes.map((s,i)=>`<option ${i===1?'selected':''}>${esc(s)}</option>`).join('')}</select><button class="add-product" data-add-product="${esc(p.sku)}" aria-label="Thêm ${esc(p.name)} vào giỏ">Thêm vào giỏ +</button></div></div></article>`).join('');
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const money = (n) => Number(n || 0).toLocaleString("vi-VN") + " đ";
+const short = (id) => (id ? "DH-" + id.slice(-8).toUpperCase() : "—");
+const clock = (ts) => new Date(ts * 1000).toLocaleTimeString("vi-VN");
+const date = (ts) => new Date(ts * 1000).toLocaleString("vi-VN");
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let catalog = [],
+  cart = [],
+  state = null,
+  category = "Tất cả",
+  tab = "store",
+  opsTransport = "rabbitmq",
+  selected = null,
+  refreshing = false,
+  toastTimer;
+let checkoutKey = null,
+  scaleExperiment = localStorage.getItem("moc-scale-experiment"),
+  errorExperiment = localStorage.getItem("moc-error-experiment");
+const statusLabels = {
+  pending: "Đã tiếp nhận",
+  processing: "Đang tạo hóa đơn",
+  invoice_ready: "Hóa đơn sẵn sàng",
+  completed: "Đã gửi hóa đơn",
+  needs_attention: "Cần xử lý thông tin",
+};
+const workerLabels = {
+  starting: "Đang mở tiến trình",
+  connecting: "Đang kết nối",
+  reconnecting: "Đang kết nối lại",
+  idle: "Sẵn sàng nhận việc",
+  rendering: "Đang tạo PDF",
+  sending: "Đang gửi email",
+  blocked: "Chờ xử lý lỗi",
+  unassigned: "Chưa được giao partition",
+  rebalancing: "Đang phân công lại",
+  stopped: "Đã dừng",
+};
+function toast(message, error = false) {
+  $("toast").textContent = message;
+  $("toast").classList.toggle("error", error);
+  $("toast").hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($("toast").hidden = true), 6000);
 }
-$('categories').onclick=e=>{const b=e.target.closest('[data-category]');if(b){category=b.dataset.category;renderCatalog();}};
-$('products').onclick=e=>{const b=e.target.closest('[data-add-product]');if(!b)return;const sku=b.dataset.addProduct,size=$('size-'+sku).value;const existing=cart.find(r=>r.sku===sku&&r.size===size);if(existing){if(existing.quantity>=10)return toast('Tối đa 10 sản phẩm cùng kích cỡ',true);existing.quantity++;}else cart.push({sku,size,quantity:1});saveCart();toast('Đã thêm sản phẩm vào giỏ hàng');};
-function saveCart(){checkoutKey=null;localStorage.setItem('moc-cart-v4',JSON.stringify(cart));renderCart();}
-function renderCart(){
-  const qty=cart.reduce((s,r)=>s+r.quantity,0),subtotal=cart.reduce((s,r)=>s+(catalog.find(p=>p.sku===r.sku)?.price||0)*r.quantity,0),shipping=subtotal>=1000000?0:subtotal?25000:0;
-  $('cart-count').textContent=qty+' món';
-  $('cart-items').innerHTML=cart.length?cart.map((r,i)=>{const p=catalog.find(p=>p.sku===r.sku);return `<div class="cart-item"><img src="/static/products/${esc(p.image)}" alt=""><div><strong>${esc(p.name)}</strong><small>${esc(r.size)} · ${esc(p.color)}</small><div class="quantity"><button type="button" data-cart-index="${i}" data-delta="-1" aria-label="Giảm ${esc(p.name)}">−</button><span>${r.quantity}</span><button type="button" data-cart-index="${i}" data-delta="1" aria-label="Tăng ${esc(p.name)}">+</button></div></div><div><span class="price">${money(p.price*r.quantity)}</span><button type="button" class="remove" data-remove="${i}" aria-label="Xóa ${esc(p.name)}">×</button></div></div>`;}).join(''):empty('Giỏ hàng đang chờ bạn','Thêm một món đồ để bắt đầu.');
-  $('cart-totals').innerHTML=`<div class="totals"><div class="total-row"><span>Tạm tính</span><span>${money(subtotal)}</span></div><div class="total-row"><span>Giao hàng</span><span>${shipping?money(shipping):'Miễn phí'}</span></div><p class="shipping-hint">${subtotal&&subtotal<1000000?'Thêm '+money(1000000-subtotal)+' để được giao hàng miễn phí.':'Miễn phí giao hàng cho đơn từ 1.000.000 đ.'}</p><div class="total-row total"><span>Tổng cộng</span><span>${money(subtotal+shipping)}</span></div></div>`;
-  $('checkout').disabled=!cart.length;
+async function api(url, body, method) {
+  const response = await fetch("/api/shop" + url, {
+    method: method || (body === undefined ? "GET" : "POST"),
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok)
+    throw Error(
+      typeof data.detail === "string"
+        ? data.detail
+        : JSON.stringify(data.detail),
+    );
+  return { data, status: response.status };
 }
-$('cart-items').onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.remove!==undefined)cart.splice(Number(b.dataset.remove),1);else if(b.dataset.cartIndex!==undefined){const i=Number(b.dataset.cartIndex);cart[i].quantity=Math.min(10,cart[i].quantity+Number(b.dataset.delta));if(cart[i].quantity<=0)cart.splice(i,1);}saveCart();};
-$('checkout-form').onsubmit=async e=>{e.preventDefault();if(!cart.length)return;const form=new FormData(e.target);checkoutKey ||= crypto.randomUUID();await busy($('checkout'),async()=>{const result=await api('/checkout',{customer:{name:form.get('name').trim(),email:form.get('email').trim(),address:form.get('address').trim()},items:cart,idempotency_key:checkoutKey});selected=result.data.order_id;localStorage.setItem('moc-last-order',selected);cart=[];saveCart();await refresh(true);selected=result.data.order_id;localStorage.setItem('moc-last-order',selected);changeTab('orders');window.scrollTo({top:0,behavior:'smooth'});toast(`HTTP ${result.status} · Đã ghi nhận ${short(selected)}. Hóa đơn sẽ được xử lý tiếp.`);});renderCart();};
-
-function itemsTable(items,images=true){return `<table class="detail-items"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${items.map(r=>`<tr><td>${images?`<img src="/static/products/${esc(r.image)}" alt="">`:''}${esc(r.name)}<small>${esc(r.color)} / ${esc(r.size)}</small></td><td>${r.quantity}</td><td>${money(r.unit_price)}</td><td>${money(r.line_total)}</td></tr>`).join('')}</tbody></table>`;}
-function totals(order){return `<div class="total-row"><span>Tạm tính</span><span>${money(order.subtotal)}</span></div><div class="total-row"><span>Giao hàng</span><span>${order.shipping?money(order.shipping):'Miễn phí'}</span></div><div class="total-row total"><span>Tổng cộng</span><span>${money(order.total)}</span></div>`;}
-function renderOrders(){
-  const orders=state?.orders||[];$('nav-orders').textContent=state?.totals.orders||0;
-  if(!orders.length){$('order-list').innerHTML=empty('Chưa có đơn hàng','Chọn sản phẩm và đặt hàng tại cửa hàng.');$('order-detail').innerHTML='<p class="loading-text">Hóa đơn và tiến trình xử lý sẽ xuất hiện ở đây.</p>';return;}
-  if(!orders.some(o=>o.id===selected))selected=orders[0].id;
-  $('order-list').innerHTML=orders.map(o=>`<button class="order-card ${selected===o.id?'selected':''}" data-select-order="${o.id}"><strong>${short(o.id)}</strong><p>${esc(o.customer.name)} · ${date(o.created)}</p><div><span class="price">${money(o.total)}</span>${badge(o)}</div></button>`).join('');
-  const o=orders.find(o=>o.id===selected),invoiceTask=o.tasks.find(t=>t.role==='invoice');
-  const queued=invoiceTask&&invoiceTask.status!=='waiting_dispatch';
-  const steps=[['Đã nhận đơn','Đơn hàng đã được lưu',true],['Đã gửi xử lý','Đang chờ / đang xử lý',queued],['Hóa đơn sẵn sàng','Có thể xem & tải PDF',!!o.invoice],['Đã gửi email','PDF được đính kèm',!!o.delivery]];
-  $('order-detail').innerHTML=`<div class="heading-row"><div><p class="eyebrow">CHI TIẾT ĐƠN HÀNG</p><h2>${short(o.id)}</h2></div>${badge(o)}</div><div class="order-stages">${steps.map(([title,desc,done])=>`<div class="order-stage ${done?'done':''}"><strong>${done?'✓ ':''}${title}</strong><small>${desc}</small></div>`).join('')}</div><div class="customer-detail"><strong>${esc(o.customer.name)}</strong><p>${esc(o.customer.address)}</p><p>Email nhận hóa đơn: ${esc(o.customer.email)}</p><p>Thanh toán khi nhận hàng · Chưa thu tiền</p></div>${itemsTable(o.items)}<div class="invoice-totals">${totals(o)}</div><div class="detail-actions">${o.invoice?`<button class="button primary" data-invoice="${o.id}">Xem hóa đơn chi tiết</button><a class="button secondary" href="/api/shop/orders/${o.id}/invoice.pdf">Tải PDF ↓</a>`:'<span class="fine">Hóa đơn đang chờ worker xử lý. Bạn có thể theo dõi tại phòng vận hành.</span>'}${o.delivery?'<a class="button secondary" href="'+esc($('mailbox-link').href)+'" target="_blank" rel="noopener">Mở email đã gửi ↗</a>':''}</div><p class="fine">${o.delivery?'Email đã được SMTP Mailpit nhận lúc '+clock(o.delivery.sent)+'. Mở hộp thư thực hành để xem thư và file PDF.':o.invoice?'Hóa đơn đã tạo xong. Tác vụ gửi email đang được xử lý riêng.':'Đơn đã được lưu bền; ứng dụng tiếp tục xử lý ngay cả khi bạn đổi trang.'}</p><div class="mini-timeline"><h3 style="margin-bottom:18px">Tiến trình đơn hàng</h3>${state.events.filter(e=>e.order_id===o.id).slice(0,12).reverse().map(e=>`<div class="timeline-item"><strong>${esc(e.kind)}</strong><time>${clock(e.ts)}</time><p>${esc(e.detail)}</p></div>`).join('')}</div>`;
-}
-$('order-list').onclick=e=>{const b=e.target.closest('[data-select-order]');if(b){selected=b.dataset.selectOrder;localStorage.setItem('moc-last-order',selected);renderOrders();}};
-function showInvoice(oid){const order=state.orders.find(o=>o.id===oid);if(!order?.invoice)return;const snapshot=order.invoice.snapshot;$('download-invoice').href='/api/shop/orders/'+oid+'/invoice.pdf';$('invoice-preview').innerHTML=`<article class="invoice-document"><div class="invoice-brand">mộc / STUDIO</div><h2>HÓA ĐƠN ĐƠN HÀNG</h2><p>Số hóa đơn: ${esc(order.invoice.number)}</p><p>Mã đơn: ${esc(oid)}</p><p>Ngày đặt: ${date(snapshot.created)}</p><div class="bill-to"><strong>${esc(snapshot.customer.name)}</strong><p>${esc(snapshot.customer.address)}</p><p>COD · thanh toán khi nhận hàng</p></div>${itemsTable(snapshot.items,false)}<div class="invoice-totals">${totals(snapshot)}</div><p class="fine">Cảm ơn bạn đã mua sắm tại Mộc Studio!<br>Chứng từ minh họa seminar; không xác nhận thu tiền và không phải hóa đơn điện tử thuế.</p></article>`;$('invoice-dialog').showModal();}
-$('order-detail').onclick=e=>{const b=e.target.closest('[data-invoice]');if(b)showInvoice(b.dataset.invoice);};
-$('close-invoice').onclick=()=>$('invoice-dialog').close();
-$('invoice-dialog').onclick=e=>{if(e.target===$('invoice-dialog'))$('invoice-dialog').close();};
-
-function liveWorkers(transport,role){return (state?.workers||[]).filter(w=>w.transport===transport&&w.role===role&&w.alive);}
-function workerCards(role){const all=state.workers.filter(w=>w.transport===opsTransport&&w.role===role),workers=[...all.filter(w=>w.alive),...all.filter(w=>!w.alive).sort((a,b)=>b.heartbeat-a.heartbeat).slice(0,2)];if(!workers.length)return empty('Chưa có consumer','Công việc vẫn được giữ ở broker / outbox. Thêm consumer khi bạn muốn xử lý.');return workers.map(w=>`<div class="worker ${!w.alive?'dead':['rendering','sending'].includes(w.state)?'busy':w.state==='blocked'?'blocked':''}"><div class="worker-head"><strong>${esc(w.name)}</strong>${w.alive?`<button class="kill" data-kill="${esc(w.name)}">Dừng / crash</button>`:''}</div><p>PID ${w.pid||'…'}</p><span class="worker-state">${esc(w.alive?(workerLabels[w.state]||w.state):'Đã dừng')}</span>${w.transport==='kafka'?`<div class="assignment">${w.assignment?.length?'Partition '+w.assignment.join(', '):'Chưa có partition'}</div>`:'<div class="assignment">prefetch = 1 · ACK từng tác vụ</div>'}${w.order_id?`<p>Đơn ${short(w.order_id)}</p>`:''}</div>`).join('');}
-function dataTable(headers,rows){return `<table class="data-table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>'<tr>'+r.map(c=>`<td>${c}</td>`).join('')+'</tr>').join('')}</tbody></table>`;}
-function renderOperations(){
-  const t=state.totals;$('global-metrics').innerHTML=[['Đơn đã lưu',t.orders,'Giá và số tiền do server tính'],['Hóa đơn PDF',t.invoices,'Dữ liệu và file PDF đã tạo'],['Email đã gửi',t.emails,'SMTP Mailpit đã nhận thư'],['Outbox đang chờ',t.pending_outbox,'Sẽ publish / thử lại khi broker sẵn sàng']].map(([label,note,sub])=>`<div class="metric"><label>${label}</label><strong>${note}</strong><small>${sub}</small></div>`).join('');
-  const orders=state.orders.filter(o=>o.transport===opsTransport),counts=state.transport_totals[opsTransport],roles=state.services.rabbitmq.roles||{},inv=roles.invoice,mail=roles.email;
-  const node=(title,value,sub,active=false)=>`<div class="flow-node ${active?'active':''}"><p class="eyebrow">${opsTransport==='rabbitmq'?'RABBITMQ':'KAFKA'}</p><h3>${title}</h3><strong>${value}</strong><small>${sub}</small></div>`;
-  const pending=counts.pending_outbox;
-  $('pipeline').innerHTML=node('Đơn + outbox',pending,'yêu cầu đang chờ publish',pending>0)
-    +node(opsTransport==='rabbitmq'?'Queue tạo hóa đơn':'Topic hóa đơn',opsTransport==='rabbitmq'?(inv?.ready??'—'):(state.services.kafka.topics?.find(x=>x.name.endsWith('.invoice'))?.partitions??'—'),opsTransport==='rabbitmq'?`Ready · ${inv?.unacked??'—'} Unacked`:'partition · assignment ở thẻ worker')
-    +node('Hóa đơn đã tạo',counts.invoices,'PDF thật có chi tiết đơn hàng',liveWorkers(opsTransport,'invoice').some(w=>w.state==='rendering'))
-    +node(opsTransport==='rabbitmq'?'Queue gửi email':'Topic email',opsTransport==='rabbitmq'?(mail?.ready??'—'):(state.services.kafka.topics?.find(x=>x.name.endsWith('.email'))?.partitions??'—'),opsTransport==='rabbitmq'?`Ready · ${mail?.unacked??'—'} Unacked`:'consumer xử lý tuần tự trong partition')
-    +node('Email + PDF',counts.emails,'thư đã được Mailpit SMTP nhận',liveWorkers(opsTransport,'email').some(w=>w.state==='sending'));
-  $('invoice-workers').innerHTML=workerCards('invoice');$('email-workers').innerHTML=workerCards('email');
-  if(document.activeElement!==$('observation-delay'))$('observation-delay').value=String(state.settings.observation_delay);
-  if(!document.activeElement.closest?.('#blocked-tasks')){
-    const blocked=state.blocked.filter(t=>t.transport===opsTransport);
-    $('blocked-tasks').innerHTML=blocked.length?blocked.map(t=>`<div class="blocked-item"><div><strong>${short(t.order_id)} · ${t.role==='email'?'Gửi email':'Tạo hóa đơn'} <span class="badge error">${t.status==='blocked'?'Partition đang pause':'Đã vào DLQ'}</span></strong><p>${esc(t.error)}</p>${t.transport==='kafka'?`<p>partition ${t.partition_id??'—'} / offset ${t.offset_id??'—'} · topic ${esc(t.topic)}</p>`:''}</div><div class="fix-form"><input type="email" placeholder="Email đúng để nhận hóa đơn" value="khachhang@example.test" aria-label="Email sửa cho ${short(t.order_id)}" data-fix-email="${esc(t.id)}"><button class="button small" data-retry-task="${esc(t.id)}" data-order-id="${t.order_id}">Sửa email & thử lại</button>${t.transport==='kafka'&&t.status==='blocked'?`<button class="button small secondary" data-dead-task="${esc(t.id)}">Chuyển sang topic lỗi</button>`:''}</div></div>`).join(''):empty('Không có tác vụ cần xử lý',opsTransport==='rabbitmq'?`DLQ broker: hóa đơn ${inv?.dlq??'—'}, email ${mail?.dlq??'—'} · Số đếm có độ trễ lấy mẫu.`:'Consumer có thể tiếp tục đọc trên các partition đã được giao.');
+async function busy(button, fn) {
+  button.disabled = true;
+  try {
+    return await fn();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
   }
-  $('operations-orders').innerHTML=dataTable(['Đơn / khách hàng','Xử lý','Hóa đơn','Email',''],orders.map(o=>[`<button class="text-button" data-open-order="${o.id}">${short(o.id)}</button><br>${esc(o.customer.name)}`,badge(o),o.invoice?`<button class="text-button" data-invoice="${o.id}">${esc(o.invoice.number)}</button>`:'Đang chờ',o.delivery?'✓ Đã gửi':'Đang chờ',o.invoice?`<button class="text-button" data-duplicate="${o.id}">Gửi trùng tác vụ</button>`:'']));
-  $('event-log').innerHTML=state.events.filter(e=>!e.transport||e.transport===opsTransport).slice(0,100).map(e=>`<div class="event"><div class="event-head"><strong>${esc(e.kind)}</strong><time>${clock(e.ts)}</time></div><small>${e.order_id?short(e.order_id):''} ${esc(e.worker||'')}</small><p>${esc(e.detail)}</p></div>`).join('')||empty('Chưa có sự kiện','Đặt một đơn hàng để bắt đầu theo dõi.');
-  $('outbox-table').innerHTML=dataTable(['Task','Broker / vai trò','Trạng thái','Lần gửi','Payload / lỗi'],state.outbox.map(r=>[esc(short(r.task_id.split(':')[0]))+' / '+esc(r.task_id.split(':')[1]),esc(r.transport)+' / '+esc(r.role),esc(r.status),r.attempts,`<details><summary>Xem JSON</summary><pre>${esc(JSON.stringify(JSON.parse(r.payload),null,2))}</pre></details>${esc(r.error||'')}`]));
 }
-function renderComparison(){
-  $('comparison-live').innerHTML=['rabbitmq','kafka'].map(mode=>{const workers=liveWorkers(mode,'invoice'),assigned=mode==='rabbitmq'?workers.filter(w=>!['connecting','reconnecting','starting'].includes(w.state)).length:workers.filter(w=>w.assignment?.length).length,orders=state.orders.filter(o=>o.experiment===scaleExperiment&&o.transport===mode),done=orders.filter(o=>o.invoice).length,last=done?Math.max(...orders.filter(o=>o.invoice).map(o=>o.invoice.created)):0,elapsed=orders.length&&done===orders.length?((last-Math.min(...orders.map(o=>o.created)))).toFixed(1)+'s':'Đang quan sát';return `<section class="compare-broker"><div class="heading-row"><h2>${mode==='rabbitmq'?'RabbitMQ':'Kafka classic group'}</h2><span class="badge ${assigned?'ok':'warn'}">${assigned} consumer ${mode==='rabbitmq'?'sẵn sàng':'có partition'}</span></div><div class="big-number">${workers.length}<span style="font-size:13px;letter-spacing:0;color:var(--muted)"> / 4 worker hóa đơn</span></div><p class="fine">${mode==='rabbitmq'?'Một queue công việc; prefetch=1 trên từng consumer.':'Hai partition; assignment thật được cập nhật từ consumer callback.'}</p><div class="assignment-strip">${workers.map(w=>`<div class="assignment-card ${mode==='kafka'&&!w.assignment?.length?'unassigned':''}"><strong>${esc(w.name)}</strong><span>${mode==='rabbitmq'?esc(workerLabels[w.state]||w.state):w.assignment?.length?'P'+w.assignment.join(', P'):esc(workerLabels[w.state]||'Chưa có partition')}</span></div>`).join('')||'<span class="fine">Chưa có worker. Bấm chuẩn bị phía trên.</span>'}</div><div class="progress-track"><i style="width:${orders.length?100*done/orders.length:0}%"></i></div><p><strong>${done} / ${orders.length} hóa đơn PDF</strong></p><p class="fine">${orders.length?'Từ lúc lưu lô đến hóa đơn cuối: '+elapsed:'Nạp lô đơn giống nhau để quan sát.'}</p><p class="fine">${orders.filter(o=>o.delivery).length} email đã gửi · nhịp quan sát ${state.settings.observation_delay}s mỗi bước. Đoạn tạo PDF và gửi SMTP dùng chung cho hai broker.</p></section>`;}).join('');
-  if(errorExperiment)$('error-comparison-result').innerHTML='<div class="result-summary">'+['rabbitmq','kafka'].map(mode=>{const orders=state.orders.filter(o=>o.experiment===errorExperiment&&o.transport===mode),blocked=state.blocked.filter(t=>orders.some(o=>o.id===t.order_id));return `<div><strong>${mode==='rabbitmq'?'RabbitMQ / DLQ có sẵn':'Kafka / chính sách giữ thứ tự'}</strong><p>${orders.filter(o=>o.delivery).length} / ${orders.length} email đã gửi · ${blocked.length} tác vụ cần xử lý</p><p>${mode==='rabbitmq'?'NACK riêng tác vụ lỗi, các tác vụ tốt vẫn được nhận tiếp.':blocked.some(t=>t.status==='blocked')?'Partition lỗi đang chờ quyết định retry hoặc chuyển topic lỗi do ứng dụng xây.':'Không còn partition pause vì lỗi trong nhóm đơn này; theo dõi kết quả email ở trên.'}</p></div>`;}).join('')+'</div>';
+function empty(title, text = "") {
+  return `<div class="empty-state"><strong>${esc(title)}</strong>${esc(text)}</div>`;
 }
-function renderState(){if(!state)return;renderOrders();if(tab==='operations')renderOperations();if(tab==='compare')renderComparison();}
-async function refresh(force=false){if(refreshing){if(!force)return;while(refreshing)await wait(30);}refreshing=true;try{state=(await api('/state')).data;renderState();}catch(error){/* An explicit action reports errors; polling keeps the last known view. */}finally{refreshing=false;}}
+function badge(order) {
+  return `<span class="badge ${order.status === "completed" ? "ok" : order.status === "needs_attention" ? "error" : "warn"}">${esc(statusLabels[order.status])}</span>`;
+}
+function changeTab(next) {
+  if (!["store", "orders", "operations", "compare"].includes(next)) return;
+  if (next !== tab) window.scrollTo({ top: 0 });
+  tab = next;
+  document
+    .querySelectorAll(".view")
+    .forEach((v) => (v.hidden = v.id !== "view-" + tab));
+  document
+    .querySelectorAll("[data-tab]")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  if (location.hash !== "#" + next) history.replaceState(null, "", "#" + next);
+  renderState();
+}
+document
+  .querySelectorAll("[data-tab]")
+  .forEach((b) => (b.onclick = () => changeTab(b.dataset.tab)));
+window.addEventListener("hashchange", () => changeTab(location.hash.slice(1)));
 
-$('ops-transport').onclick=e=>{const b=e.target.closest('[data-transport]');if(b){opsTransport=b.dataset.transport;$('ops-transport').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));renderOperations();}};
-document.querySelectorAll('[data-add-role]').forEach(b=>b.onclick=()=>busy(b,async()=>{await api('/workers',{transport:opsTransport,role:b.dataset.addRole});await refresh();toast('Đã mở consumer process. Chờ WORKER_UP hoặc PARTITION_ASSIGNED.');}));
-document.querySelectorAll('[data-seed]').forEach(b=>b.onclick=()=>busy(b,async()=>{const scenario=b.dataset.seed;await api('/seed',{transport:opsTransport,scenario,count:scenario==='normal'?6:scenario==='invalid_email'?3:1});await refresh();toast('Đã lưu các đơn thử và outbox. Theo dõi worker / queue ở trên.');}));
-$('observation-delay').onchange=()=>busy($('observation-delay'),async()=>{await api('/settings',{seconds:Number($('observation-delay').value)});await refresh();});
-$('view-operations').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.kill)busy(b,async()=>{await api('/workers/'+encodeURIComponent(b.dataset.kill)+'/crash',{});await refresh();toast('Đã kill process thật. Tác vụ chưa xác nhận có thể được giao lại.');});if(b.dataset.openOrder){selected=b.dataset.openOrder;changeTab('orders');window.scrollTo({top:0,behavior:'smooth'});}if(b.dataset.invoice)showInvoice(b.dataset.invoice);if(b.dataset.duplicate)busy(b,async()=>{await api('/orders/'+b.dataset.duplicate+'/duplicate',{});toast('Đã yêu cầu gửi lại cùng task ID; kiểm tra DEDUP và số hóa đơn.');await refresh();});if(b.dataset.retryTask)busy(b,async()=>{const input=[...document.querySelectorAll('[data-fix-email]')].find(i=>i.dataset.fixEmail===b.dataset.retryTask);await api('/orders/'+b.dataset.orderId+'/email',{email:input.value.trim()},'PATCH');await api('/tasks/'+encodeURIComponent(b.dataset.retryTask)+'/retry',{});toast('Đã sửa địa chỉ email và yêu cầu retry cùng tác vụ.');input.blur();await refresh();});if(b.dataset.deadTask)busy(b,async()=>{await api('/tasks/'+encodeURIComponent(b.dataset.deadTask)+'/dead-letter',{});await refresh();toast('Đã yêu cầu worker publish topic lỗi rồi commit offset nguồn.');});});
-$('reset-shop').onclick=()=>{if(!confirm('Làm mới dữ liệu đơn hàng của phiên cửa hàng? Hãy dừng toàn bộ worker trước. Lab cũ không bị thay đổi.'))return;busy($('reset-shop'),async()=>{const result=await api('/reset',{});scaleExperiment=null;errorExperiment=null;selected=null;for(const key of ['moc-last-order','moc-scale-experiment','moc-error-experiment'])localStorage.removeItem(key);await refresh();toast(result.data.meaning);});};
+function renderCatalog() {
+  $("categories").innerHTML = [
+    "Tất cả",
+    ...new Set(catalog.map((p) => p.category)),
+  ]
+    .map(
+      (c) =>
+        `<button class="${c === category ? "active" : ""}" data-category="${esc(c)}">${esc(c)}</button>`,
+    )
+    .join("");
+  const products = catalog.filter(
+    (p) => category === "Tất cả" || p.category === category,
+  );
+  $("product-count").textContent = products.length + " sản phẩm";
+  $("products").innerHTML = products
+    .map(
+      (p, i) =>
+        `<article class="product-card"><div class="product-image"><img src="/static/products/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">${i < 2 ? '<span class="product-tag">EVERYDAY ESSENTIAL</span>' : ""}</div><div class="product-info"><div class="product-top"><h3>${esc(p.name)}</h3><span class="price">${money(p.price)}</span></div><p>${esc(p.color)}</p><div class="product-actions"><select id="size-${esc(p.sku)}" aria-label="Kích cỡ ${esc(p.name)}">${p.sizes.map((s, i) => `<option ${i === 1 ? "selected" : ""}>${esc(s)}</option>`).join("")}</select><button class="add-product" data-add-product="${esc(p.sku)}" aria-label="Thêm ${esc(p.name)} vào giỏ">Thêm vào giỏ +</button></div></div></article>`,
+    )
+    .join("");
+}
+$("categories").onclick = (e) => {
+  const b = e.target.closest("[data-category]");
+  if (b) {
+    category = b.dataset.category;
+    renderCatalog();
+  }
+};
+$("products").onclick = (e) => {
+  const b = e.target.closest("[data-add-product]");
+  if (!b) return;
+  const sku = b.dataset.addProduct,
+    size = $("size-" + sku).value;
+  const existing = cart.find((r) => r.sku === sku && r.size === size);
+  if (existing) {
+    if (existing.quantity >= 10)
+      return toast("Tối đa 10 sản phẩm cùng kích cỡ", true);
+    existing.quantity++;
+  } else cart.push({ sku, size, quantity: 1 });
+  saveCart();
+  toast("Đã thêm sản phẩm vào giỏ hàng");
+};
+function saveCart() {
+  checkoutKey = null;
+  localStorage.setItem("moc-cart-v4", JSON.stringify(cart));
+  renderCart();
+}
+function renderCart() {
+  const qty = cart.reduce((s, r) => s + r.quantity, 0),
+    subtotal = cart.reduce(
+      (s, r) =>
+        s + (catalog.find((p) => p.sku === r.sku)?.price || 0) * r.quantity,
+      0,
+    ),
+    shipping = subtotal >= 1000000 ? 0 : subtotal ? 25000 : 0;
+  $("cart-count").textContent = qty + " món";
+  $("cart-items").innerHTML = cart.length
+    ? cart
+        .map((r, i) => {
+          const p = catalog.find((p) => p.sku === r.sku);
+          return `<div class="cart-item"><img src="/static/products/${esc(p.image)}" alt=""><div><strong>${esc(p.name)}</strong><small>${esc(r.size)} · ${esc(p.color)}</small><div class="quantity"><button type="button" data-cart-index="${i}" data-delta="-1" aria-label="Giảm ${esc(p.name)}">−</button><span>${r.quantity}</span><button type="button" data-cart-index="${i}" data-delta="1" aria-label="Tăng ${esc(p.name)}">+</button></div></div><div><span class="price">${money(p.price * r.quantity)}</span><button type="button" class="remove" data-remove="${i}" aria-label="Xóa ${esc(p.name)}">×</button></div></div>`;
+        })
+        .join("")
+    : empty("Giỏ hàng đang chờ bạn", "Thêm một món đồ để bắt đầu.");
+  $("cart-totals").innerHTML =
+    `<div class="totals"><div class="total-row"><span>Tạm tính</span><span>${money(subtotal)}</span></div><div class="total-row"><span>Giao hàng</span><span>${shipping ? money(shipping) : "Miễn phí"}</span></div><p class="shipping-hint">${subtotal && subtotal < 1000000 ? "Thêm " + money(1000000 - subtotal) + " để được giao hàng miễn phí." : "Miễn phí giao hàng cho đơn từ 1.000.000 đ."}</p><div class="total-row total"><span>Tổng cộng</span><span>${money(subtotal + shipping)}</span></div></div>`;
+  $("checkout").disabled = !cart.length;
+}
+$("cart-items").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.remove !== undefined) cart.splice(Number(b.dataset.remove), 1);
+  else if (b.dataset.cartIndex !== undefined) {
+    const i = Number(b.dataset.cartIndex);
+    cart[i].quantity = Math.min(10, cart[i].quantity + Number(b.dataset.delta));
+    if (cart[i].quantity <= 0) cart.splice(i, 1);
+  }
+  saveCart();
+};
+$("checkout-form").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!cart.length) return;
+  const form = new FormData(e.target);
+  checkoutKey ||= crypto.randomUUID();
+  await busy($("checkout"), async () => {
+    const result = await api("/checkout", {
+      customer: {
+        name: form.get("name").trim(),
+        email: form.get("email").trim(),
+        address: form.get("address").trim(),
+      },
+      items: cart,
+      idempotency_key: checkoutKey,
+    });
+    selected = result.data.order_id;
+    localStorage.setItem("moc-last-order", selected);
+    cart = [];
+    saveCart();
+    await refresh(true);
+    selected = result.data.order_id;
+    localStorage.setItem("moc-last-order", selected);
+    changeTab("orders");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast(
+      `HTTP ${result.status} · Đã ghi nhận ${short(selected)}. Hóa đơn sẽ được xử lý tiếp.`,
+    );
+  });
+  renderCart();
+};
 
-async function ensureWorkers(transport,role,count){await refresh();const existing=liveWorkers(transport,role).length;for(let i=existing;i<count;i++)await api('/workers',{transport,role});}
-async function prepare(){for(const mode of ['rabbitmq','kafka']){await ensureWorkers(mode,'invoice',4);await ensureWorkers(mode,'email',1);}toast('Đang chờ consumer kết nối và Kafka phân công partition…');const deadline=Date.now()+45000;while(Date.now()<deadline){await refresh();const r=state?.services.rabbitmq.roles?.invoice?.consumers||0,k=liveWorkers('kafka','invoice');if(r>=4&&k.length===4&&k.filter(w=>w.assignment?.length).length===2)return;await wait(1000);}throw Error('Worker đã mở nhưng chưa sẵn sàng đầy đủ. Kiểm tra broker và assignment tại phòng vận hành.');}
-$('prepare-comparison').onclick=()=>busy($('prepare-comparison'),async()=>{await prepare();await refresh();toast('Đã sẵn sàng: 4 RabbitMQ consumer; 4 Kafka consumer với 2 consumer có partition.');});
-$('seed-comparison').onclick=()=>busy($('seed-comparison'),async()=>{const result=(await api('/seed',{transport:'both',scenario:'normal',count:6})).data;scaleExperiment=result.experiment;localStorage.setItem('moc-scale-experiment',scaleExperiment);await refresh();toast('Đã nạp cùng 6 đơn mỗi bên. Quan sát hóa đơn và assignment thật.');});
-$('error-comparison').onclick=()=>busy($('error-comparison'),async()=>{for(const mode of ['rabbitmq','kafka']){await ensureWorkers(mode,'invoice',2);await ensureWorkers(mode,'email',1);}const result=(await api('/seed',{transport:'both',scenario:'invalid_email',count:3})).data;errorExperiment=result.experiment;localStorage.setItem('moc-error-experiment',errorExperiment);await refresh();toast('Đã tạo một đơn lỗi rồi hai đơn tốt; Kafka cùng partition 0.');});
-$('replay-shop').onclick=()=>busy($('replay-shop'),async()=>{$('shop-replay-result').textContent='Group phân tích mới đang đọc topic thật…';const r=(await api('/replay',{})).data;$('shop-replay-result').textContent=`Topic: ${r.topic}\nGroup mới: ${r.group}\nĐọc ${r.records.length} bản ghi / ${r.unique_orders} đơn khác nhau.\n\n`+r.records.map(x=>`${short(x.order_id)}  partition=${x.partition}  offset=${x.offset}`).join('\n')+'\n\n'+r.meaning;});
+function itemsTable(items, images = true) {
+  return `<table class="detail-items"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${items.map((r) => `<tr><td>${images ? `<img src="/static/products/${esc(r.image)}" alt="">` : ""}${esc(r.name)}<small>${esc(r.color)} / ${esc(r.size)}</small></td><td>${r.quantity}</td><td>${money(r.unit_price)}</td><td>${money(r.line_total)}</td></tr>`).join("")}</tbody></table>`;
+}
+function totals(order) {
+  return `<div class="total-row"><span>Tạm tính</span><span>${money(order.subtotal)}</span></div><div class="total-row"><span>Giao hàng</span><span>${order.shipping ? money(order.shipping) : "Miễn phí"}</span></div><div class="total-row total"><span>Tổng cộng</span><span>${money(order.total)}</span></div>`;
+}
+function renderOrders() {
+  const orders = state?.orders || [];
+  $("nav-orders").textContent = state?.totals.orders || 0;
+  if (!orders.length) {
+    $("order-list").innerHTML = empty(
+      "Chưa có đơn hàng",
+      "Chọn sản phẩm và đặt hàng tại cửa hàng.",
+    );
+    $("order-detail").innerHTML =
+      '<p class="loading-text">Hóa đơn và tiến trình xử lý sẽ xuất hiện ở đây.</p>';
+    return;
+  }
+  if (!orders.some((o) => o.id === selected)) selected = orders[0].id;
+  $("order-list").innerHTML = orders
+    .map(
+      (o) =>
+        `<button class="order-card ${selected === o.id ? "selected" : ""}" data-select-order="${o.id}"><strong>${short(o.id)}</strong><p>${esc(o.customer.name)} · ${date(o.created)}</p><div><span class="price">${money(o.total)}</span>${badge(o)}</div></button>`,
+    )
+    .join("");
+  const o = orders.find((o) => o.id === selected),
+    invoiceTask = o.tasks.find((t) => t.role === "invoice");
+  const queued = invoiceTask && invoiceTask.status !== "waiting_dispatch";
+  const steps = [
+    ["Đã nhận đơn", "Đơn hàng đã được lưu", true],
+    ["Đã gửi xử lý", "Đang chờ / đang xử lý", queued],
+    ["Hóa đơn sẵn sàng", "Có thể xem & tải PDF", !!o.invoice],
+    ["Đã gửi email", "PDF được đính kèm", !!o.delivery],
+  ];
+  $("order-detail").innerHTML =
+    `<div class="heading-row"><div><p class="eyebrow">CHI TIẾT ĐƠN HÀNG</p><h2>${short(o.id)}</h2></div>${badge(o)}</div><div class="order-stages">${steps.map(([title, desc, done]) => `<div class="order-stage ${done ? "done" : ""}"><strong>${done ? "✓ " : ""}${title}</strong><small>${desc}</small></div>`).join("")}</div><div class="customer-detail"><strong>${esc(o.customer.name)}</strong><p>${esc(o.customer.address)}</p><p>Email nhận hóa đơn: ${esc(o.customer.email)}</p><p>Thanh toán khi nhận hàng · Chưa thu tiền</p></div>${itemsTable(o.items)}<div class="invoice-totals">${totals(o)}</div><div class="detail-actions">${o.invoice ? `<button class="button primary" data-invoice="${o.id}">Xem hóa đơn chi tiết</button><a class="button secondary" href="/api/shop/orders/${o.id}/invoice.pdf">Tải PDF ↓</a>` : '<span class="fine">Hóa đơn đang chờ worker xử lý. Bạn có thể theo dõi tại phòng vận hành.</span>'}${o.delivery ? '<a class="button secondary" href="' + esc($("mailbox-link").href) + '" target="_blank" rel="noopener">Mở email đã gửi ↗</a>' : ""}</div><p class="fine">${o.delivery ? "Email đã được SMTP Mailpit nhận lúc " + clock(o.delivery.sent) + ". Mở hộp thư thực hành để xem thư và file PDF." : o.invoice ? "Hóa đơn đã tạo xong. Tác vụ gửi email đang được xử lý riêng." : "Đơn đã được lưu bền; ứng dụng tiếp tục xử lý ngay cả khi bạn đổi trang."}</p><div class="mini-timeline"><h3 style="margin-bottom:18px">Tiến trình đơn hàng</h3>${state.events
+      .filter((e) => e.order_id === o.id)
+      .slice(0, 12)
+      .reverse()
+      .map(
+        (e) =>
+          `<div class="timeline-item"><strong>${esc(e.kind)}</strong><time>${clock(e.ts)}</time><p>${esc(e.detail)}</p></div>`,
+      )
+      .join("")}</div>`;
+}
+$("order-list").onclick = (e) => {
+  const b = e.target.closest("[data-select-order]");
+  if (b) {
+    selected = b.dataset.selectOrder;
+    localStorage.setItem("moc-last-order", selected);
+    renderOrders();
+  }
+};
+function showInvoice(oid) {
+  const order = state.orders.find((o) => o.id === oid);
+  if (!order?.invoice) return;
+  const snapshot = order.invoice.snapshot;
+  $("download-invoice").href = "/api/shop/orders/" + oid + "/invoice.pdf";
+  $("invoice-preview").innerHTML =
+    `<article class="invoice-document"><div class="invoice-brand">mộc / STUDIO</div><h2>HÓA ĐƠN ĐƠN HÀNG</h2><p>Số hóa đơn: ${esc(order.invoice.number)}</p><p>Mã đơn: ${esc(oid)}</p><p>Ngày đặt: ${date(snapshot.created)}</p><div class="bill-to"><strong>${esc(snapshot.customer.name)}</strong><p>${esc(snapshot.customer.address)}</p><p>COD · thanh toán khi nhận hàng</p></div>${itemsTable(snapshot.items, false)}<div class="invoice-totals">${totals(snapshot)}</div><p class="fine">Cảm ơn bạn đã mua sắm tại Mộc Studio!<br>Chứng từ minh họa seminar; không xác nhận thu tiền và không phải hóa đơn điện tử thuế.</p></article>`;
+  $("invoice-dialog").showModal();
+}
+$("order-detail").onclick = (e) => {
+  const b = e.target.closest("[data-invoice]");
+  if (b) showInvoice(b.dataset.invoice);
+};
+$("close-invoice").onclick = () => $("invoice-dialog").close();
+$("invoice-dialog").onclick = (e) => {
+  if (e.target === $("invoice-dialog")) $("invoice-dialog").close();
+};
 
-async function boot(){try{const r=(await api('/catalog')).data;catalog=r.products;$('mailbox-link').href=r.mailpit_url;$('management-link').href=r.management_url;try{cart=JSON.parse(localStorage.getItem('moc-cart-v4')||'[]').filter(r=>catalog.some(p=>p.sku===r.sku&&p.sizes.includes(r.size))&&Number.isInteger(r.quantity)&&r.quantity>0&&r.quantity<=10);selected=localStorage.getItem('moc-last-order');}catch(error){cart=[];}renderCatalog();renderCart();changeTab(location.hash.slice(1)||'store');await refresh();setInterval(refresh,1500);}catch(error){toast('Chưa tải được cửa hàng: '+error.message,true);}}
+function liveWorkers(transport, role) {
+  return (state?.workers || []).filter(
+    (w) => w.transport === transport && w.role === role && w.alive,
+  );
+}
+function workerCards(role) {
+  const all = state.workers.filter(
+      (w) => w.transport === opsTransport && w.role === role,
+    ),
+    workers = [
+      ...all.filter((w) => w.alive),
+      ...all
+        .filter((w) => !w.alive)
+        .sort((a, b) => b.heartbeat - a.heartbeat)
+        .slice(0, 2),
+    ];
+  if (!workers.length)
+    return empty(
+      "Chưa có consumer",
+      "Công việc vẫn được giữ ở broker / outbox. Thêm consumer khi bạn muốn xử lý.",
+    );
+  return workers
+    .map(
+      (w) =>
+        `<div class="worker ${!w.alive ? "dead" : ["rendering", "sending"].includes(w.state) ? "busy" : w.state === "blocked" ? "blocked" : ""}"><div class="worker-head"><strong>${esc(w.name)}</strong>${w.alive ? `<button class="kill" data-kill="${esc(w.name)}">Dừng / crash</button>` : ""}</div><p>PID ${w.pid || "…"}</p><span class="worker-state">${esc(w.alive ? workerLabels[w.state] || w.state : "Đã dừng")}</span>${w.transport === "kafka" ? `<div class="assignment">${w.assignment?.length ? "Partition " + w.assignment.join(", ") : "Chưa có partition"}</div>` : '<div class="assignment">prefetch = 1 · ACK từng tác vụ</div>'}${w.order_id ? `<p>Đơn ${short(w.order_id)}</p>` : ""}</div>`,
+    )
+    .join("");
+}
+function dataTable(headers, rows) {
+  return `<table class="data-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => "<tr>" + r.map((c) => `<td>${c}</td>`).join("") + "</tr>").join("")}</tbody></table>`;
+}
+function renderOperations() {
+  const t = state.totals;
+  $("global-metrics").innerHTML = [
+    ["Đơn đã lưu", t.orders, "Giá và số tiền do server tính"],
+    ["Hóa đơn PDF", t.invoices, "Dữ liệu và file PDF đã tạo"],
+    ["Email đã gửi", t.emails, "SMTP Mailpit đã nhận thư"],
+    [
+      "Outbox đang chờ",
+      t.pending_outbox,
+      "Sẽ publish / thử lại khi broker sẵn sàng",
+    ],
+  ]
+    .map(
+      ([label, note, sub]) =>
+        `<div class="metric"><label>${label}</label><strong>${note}</strong><small>${sub}</small></div>`,
+    )
+    .join("");
+  const orders = state.orders.filter((o) => o.transport === opsTransport),
+    counts = state.transport_totals[opsTransport],
+    roles = state.services.rabbitmq.roles || {},
+    inv = roles.invoice,
+    mail = roles.email;
+  const node = (title, value, sub, active = false) =>
+    `<div class="flow-node ${active ? "active" : ""}"><p class="eyebrow">${opsTransport === "rabbitmq" ? "RABBITMQ" : "KAFKA"}</p><h3>${title}</h3><strong>${value}</strong><small>${sub}</small></div>`;
+  const pending = counts.pending_outbox;
+  $("pipeline").innerHTML =
+    node("Đơn + outbox", pending, "yêu cầu đang chờ publish", pending > 0) +
+    node(
+      opsTransport === "rabbitmq" ? "Queue tạo hóa đơn" : "Topic hóa đơn",
+      opsTransport === "rabbitmq"
+        ? (inv?.ready ?? "—")
+        : (state.services.kafka.topics?.find((x) => x.name.endsWith(".invoice"))
+            ?.partitions ?? "—"),
+      opsTransport === "rabbitmq"
+        ? `Ready · ${inv?.unacked ?? "—"} Unacked`
+        : "partition · assignment ở thẻ worker",
+    ) +
+    node(
+      "Hóa đơn đã tạo",
+      counts.invoices,
+      "PDF thật có chi tiết đơn hàng",
+      liveWorkers(opsTransport, "invoice").some((w) => w.state === "rendering"),
+    ) +
+    node(
+      opsTransport === "rabbitmq" ? "Queue gửi email" : "Topic email",
+      opsTransport === "rabbitmq"
+        ? (mail?.ready ?? "—")
+        : (state.services.kafka.topics?.find((x) => x.name.endsWith(".email"))
+            ?.partitions ?? "—"),
+      opsTransport === "rabbitmq"
+        ? `Ready · ${mail?.unacked ?? "—"} Unacked`
+        : "consumer xử lý tuần tự trong partition",
+    ) +
+    node(
+      "Email + PDF",
+      counts.emails,
+      "thư đã được Mailpit SMTP nhận",
+      liveWorkers(opsTransport, "email").some((w) => w.state === "sending"),
+    );
+  $("invoice-workers").innerHTML = workerCards("invoice");
+  $("email-workers").innerHTML = workerCards("email");
+  if (document.activeElement !== $("observation-delay"))
+    $("observation-delay").value = String(state.settings.observation_delay);
+  if (!document.activeElement.closest?.("#blocked-tasks")) {
+    const blocked = state.blocked.filter((t) => t.transport === opsTransport);
+    $("blocked-tasks").innerHTML = blocked.length
+      ? blocked
+          .map(
+            (t) =>
+              `<div class="blocked-item"><div><strong>${short(t.order_id)} · ${t.role === "email" ? "Gửi email" : "Tạo hóa đơn"} <span class="badge error">${t.status === "blocked" ? "Partition đang pause" : "Đã vào DLQ"}</span></strong><p>${esc(t.error)}</p>${t.transport === "kafka" ? `<p>partition ${t.partition_id ?? "—"} / offset ${t.offset_id ?? "—"} · topic ${esc(t.topic)}</p>` : ""}</div><div class="fix-form"><input type="email" placeholder="Email đúng để nhận hóa đơn" value="khachhang@example.test" aria-label="Email sửa cho ${short(t.order_id)}" data-fix-email="${esc(t.id)}"><button class="button small" data-retry-task="${esc(t.id)}" data-order-id="${t.order_id}">Sửa email & thử lại</button>${t.transport === "kafka" && t.status === "blocked" ? `<button class="button small secondary" data-dead-task="${esc(t.id)}">Chuyển sang topic lỗi</button>` : ""}</div></div>`,
+          )
+          .join("")
+      : empty(
+          "Không có tác vụ cần xử lý",
+          opsTransport === "rabbitmq"
+            ? `DLQ broker: hóa đơn ${inv?.dlq ?? "—"}, email ${mail?.dlq ?? "—"} · Số đếm có độ trễ lấy mẫu.`
+            : "Consumer có thể tiếp tục đọc trên các partition đã được giao.",
+        );
+  }
+  $("operations-orders").innerHTML = dataTable(
+    ["Đơn / khách hàng", "Xử lý", "Hóa đơn", "Email", ""],
+    orders.map((o) => [
+      `<button class="text-button" data-open-order="${o.id}">${short(o.id)}</button><br>${esc(o.customer.name)}`,
+      badge(o),
+      o.invoice
+        ? `<button class="text-button" data-invoice="${o.id}">${esc(o.invoice.number)}</button>`
+        : "Đang chờ",
+      o.delivery ? "✓ Đã gửi" : "Đang chờ",
+      o.invoice
+        ? `<button class="text-button" data-duplicate="${o.id}">Gửi trùng tác vụ</button>`
+        : "",
+    ]),
+  );
+  $("event-log").innerHTML =
+    state.events
+      .filter((e) => !e.transport || e.transport === opsTransport)
+      .slice(0, 100)
+      .map(
+        (e) =>
+          `<div class="event"><div class="event-head"><strong>${esc(e.kind)}</strong><time>${clock(e.ts)}</time></div><small>${e.order_id ? short(e.order_id) : ""} ${esc(e.worker || "")}</small><p>${esc(e.detail)}</p></div>`,
+      )
+      .join("") ||
+    empty("Chưa có sự kiện", "Đặt một đơn hàng để bắt đầu theo dõi.");
+  $("outbox-table").innerHTML = dataTable(
+    ["Task", "Broker / vai trò", "Trạng thái", "Lần gửi", "Payload / lỗi"],
+    state.outbox.map((r) => [
+      esc(short(r.task_id.split(":")[0])) +
+        " / " +
+        esc(r.task_id.split(":")[1]),
+      esc(r.transport) + " / " + esc(r.role),
+      esc(r.status),
+      r.attempts,
+      `<details><summary>Xem JSON</summary><pre>${esc(JSON.stringify(JSON.parse(r.payload), null, 2))}</pre></details>${esc(r.error || "")}`,
+    ]),
+  );
+}
+function renderComparison() {
+  $("comparison-live").innerHTML = ["rabbitmq", "kafka"]
+    .map((mode) => {
+      const workers = liveWorkers(mode, "invoice"),
+        assigned =
+          mode === "rabbitmq"
+            ? workers.filter(
+                (w) =>
+                  !["connecting", "reconnecting", "starting"].includes(w.state),
+              ).length
+            : workers.filter((w) => w.assignment?.length).length,
+        orders = state.orders.filter(
+          (o) => o.experiment === scaleExperiment && o.transport === mode,
+        ),
+        done = orders.filter((o) => o.invoice).length,
+        last = done
+          ? Math.max(
+              ...orders.filter((o) => o.invoice).map((o) => o.invoice.created),
+            )
+          : 0,
+        elapsed =
+          orders.length && done === orders.length
+            ? (last - Math.min(...orders.map((o) => o.created))).toFixed(1) +
+              "s"
+            : "Đang quan sát";
+      return `<section class="compare-broker"><div class="heading-row"><h2>${mode === "rabbitmq" ? "RabbitMQ" : "Kafka classic group"}</h2><span class="badge ${assigned ? "ok" : "warn"}">${assigned} consumer ${mode === "rabbitmq" ? "sẵn sàng" : "có partition"}</span></div><div class="big-number">${workers.length}<span style="font-size:13px;letter-spacing:0;color:var(--muted)"> / 4 worker hóa đơn</span></div><p class="fine">${mode === "rabbitmq" ? "Một queue công việc; prefetch=1 trên từng consumer." : "Hai partition; assignment thật được cập nhật từ consumer callback."}</p><div class="assignment-strip">${workers.map((w) => `<div class="assignment-card ${mode === "kafka" && !w.assignment?.length ? "unassigned" : ""}"><strong>${esc(w.name)}</strong><span>${mode === "rabbitmq" ? esc(workerLabels[w.state] || w.state) : w.assignment?.length ? "P" + w.assignment.join(", P") : esc(workerLabels[w.state] || "Chưa có partition")}</span></div>`).join("") || '<span class="fine">Chưa có worker. Bấm chuẩn bị phía trên.</span>'}</div><div class="progress-track"><i style="width:${orders.length ? (100 * done) / orders.length : 0}%"></i></div><p><strong>${done} / ${orders.length} hóa đơn PDF</strong></p><p class="fine">${orders.length ? "Từ lúc lưu lô đến hóa đơn cuối: " + elapsed : "Nạp lô đơn giống nhau để quan sát."}</p><p class="fine">${orders.filter((o) => o.delivery).length} email đã gửi · nhịp quan sát ${state.settings.observation_delay}s mỗi bước. Đoạn tạo PDF và gửi SMTP dùng chung cho hai broker.</p></section>`;
+    })
+    .join("");
+  if (errorExperiment)
+    $("error-comparison-result").innerHTML =
+      '<div class="result-summary">' +
+      ["rabbitmq", "kafka"]
+        .map((mode) => {
+          const orders = state.orders.filter(
+              (o) => o.experiment === errorExperiment && o.transport === mode,
+            ),
+            blocked = state.blocked.filter((t) =>
+              orders.some((o) => o.id === t.order_id),
+            );
+          return `<div><strong>${mode === "rabbitmq" ? "RabbitMQ / DLQ có sẵn" : "Kafka / chính sách giữ thứ tự"}</strong><p>${orders.filter((o) => o.delivery).length} / ${orders.length} email đã gửi · ${blocked.length} tác vụ cần xử lý</p><p>${mode === "rabbitmq" ? "NACK riêng tác vụ lỗi, các tác vụ tốt vẫn được nhận tiếp." : blocked.some((t) => t.status === "blocked") ? "Partition lỗi đang chờ quyết định retry hoặc chuyển topic lỗi do ứng dụng xây." : "Không còn partition pause vì lỗi trong nhóm đơn này; theo dõi kết quả email ở trên."}</p></div>`;
+        })
+        .join("") +
+      "</div>";
+}
+function renderState() {
+  if (!state) return;
+  renderOrders();
+  if (tab === "operations") renderOperations();
+  if (tab === "compare") renderComparison();
+}
+async function refresh(force = false) {
+  if (refreshing) {
+    if (!force) return;
+    while (refreshing) await wait(30);
+  }
+  refreshing = true;
+  try {
+    state = (await api("/state")).data;
+    renderState();
+  } catch (error) {
+    /* An explicit action reports errors; polling keeps the last known view. */
+  } finally {
+    refreshing = false;
+  }
+}
+
+$("ops-transport").onclick = (e) => {
+  const b = e.target.closest("[data-transport]");
+  if (b) {
+    opsTransport = b.dataset.transport;
+    $("ops-transport")
+      .querySelectorAll("button")
+      .forEach((x) => x.classList.toggle("active", x === b));
+    renderOperations();
+  }
+};
+document.querySelectorAll("[data-add-role]").forEach(
+  (b) =>
+    (b.onclick = () =>
+      busy(b, async () => {
+        await api("/workers", {
+          transport: opsTransport,
+          role: b.dataset.addRole,
+        });
+        await refresh();
+        toast("Đã mở consumer process. Chờ WORKER_UP hoặc PARTITION_ASSIGNED.");
+      })),
+);
+document.querySelectorAll("[data-seed]").forEach(
+  (b) =>
+    (b.onclick = () =>
+      busy(b, async () => {
+        const scenario = b.dataset.seed;
+        await api("/seed", {
+          transport: opsTransport,
+          scenario,
+          count:
+            scenario === "normal" ? 6 : scenario === "invalid_email" ? 3 : 1,
+        });
+        await refresh();
+        toast("Đã lưu các đơn thử và outbox. Theo dõi worker / queue ở trên.");
+      })),
+);
+$("observation-delay").onchange = () =>
+  busy($("observation-delay"), async () => {
+    await api("/settings", { seconds: Number($("observation-delay").value) });
+    await refresh();
+  });
+$("view-operations").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.kill)
+    busy(b, async () => {
+      await api(
+        "/workers/" + encodeURIComponent(b.dataset.kill) + "/crash",
+        {},
+      );
+      await refresh();
+      toast("Đã kill process thật. Tác vụ chưa xác nhận có thể được giao lại.");
+    });
+  if (b.dataset.openOrder) {
+    selected = b.dataset.openOrder;
+    changeTab("orders");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (b.dataset.invoice) showInvoice(b.dataset.invoice);
+  if (b.dataset.duplicate)
+    busy(b, async () => {
+      await api("/orders/" + b.dataset.duplicate + "/duplicate", {});
+      toast("Đã yêu cầu gửi lại cùng task ID; kiểm tra DEDUP và số hóa đơn.");
+      await refresh();
+    });
+  if (b.dataset.retryTask)
+    busy(b, async () => {
+      const input = [...document.querySelectorAll("[data-fix-email]")].find(
+        (i) => i.dataset.fixEmail === b.dataset.retryTask,
+      );
+      await api(
+        "/orders/" + b.dataset.orderId + "/email",
+        { email: input.value.trim() },
+        "PATCH",
+      );
+      await api(
+        "/tasks/" + encodeURIComponent(b.dataset.retryTask) + "/retry",
+        {},
+      );
+      toast("Đã sửa địa chỉ email và yêu cầu retry cùng tác vụ.");
+      input.blur();
+      await refresh();
+    });
+  if (b.dataset.deadTask)
+    busy(b, async () => {
+      await api(
+        "/tasks/" + encodeURIComponent(b.dataset.deadTask) + "/dead-letter",
+        {},
+      );
+      await refresh();
+      toast("Đã yêu cầu worker publish topic lỗi rồi commit offset nguồn.");
+    });
+});
+$("reset-shop").onclick = () => {
+  if (
+    !confirm(
+      "Làm mới dữ liệu đơn hàng của phiên cửa hàng? Hãy dừng toàn bộ worker trước. File PDF đã tải và thư trong Mailpit được giữ.",
+    )
+  )
+    return;
+  busy($("reset-shop"), async () => {
+    const result = await api("/reset", {});
+    scaleExperiment = null;
+    errorExperiment = null;
+    selected = null;
+    for (const key of [
+      "moc-last-order",
+      "moc-scale-experiment",
+      "moc-error-experiment",
+    ])
+      localStorage.removeItem(key);
+    await refresh();
+    toast(result.data.meaning);
+  });
+};
+
+async function ensureWorkers(transport, role, count) {
+  await refresh();
+  const existing = liveWorkers(transport, role).length;
+  for (let i = existing; i < count; i++)
+    await api("/workers", { transport, role });
+}
+async function prepare() {
+  for (const mode of ["rabbitmq", "kafka"]) {
+    await ensureWorkers(mode, "invoice", 4);
+    await ensureWorkers(mode, "email", 1);
+  }
+  toast("Đang chờ consumer kết nối và Kafka phân công partition…");
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    await refresh();
+    const r = state?.services.rabbitmq.roles?.invoice?.consumers || 0,
+      k = liveWorkers("kafka", "invoice");
+    if (
+      r >= 4 &&
+      k.length === 4 &&
+      k.filter((w) => w.assignment?.length).length === 2
+    )
+      return;
+    await wait(1000);
+  }
+  throw Error(
+    "Worker đã mở nhưng chưa sẵn sàng đầy đủ. Kiểm tra broker và assignment tại phòng vận hành.",
+  );
+}
+$("prepare-comparison").onclick = () =>
+  busy($("prepare-comparison"), async () => {
+    await prepare();
+    await refresh();
+    toast(
+      "Đã sẵn sàng: 4 RabbitMQ consumer; 4 Kafka consumer với 2 consumer có partition.",
+    );
+  });
+$("seed-comparison").onclick = () =>
+  busy($("seed-comparison"), async () => {
+    const result = (
+      await api("/seed", { transport: "both", scenario: "normal", count: 6 })
+    ).data;
+    scaleExperiment = result.experiment;
+    localStorage.setItem("moc-scale-experiment", scaleExperiment);
+    await refresh();
+    toast("Đã nạp cùng 6 đơn mỗi bên. Quan sát hóa đơn và assignment thật.");
+  });
+$("error-comparison").onclick = () =>
+  busy($("error-comparison"), async () => {
+    for (const mode of ["rabbitmq", "kafka"]) {
+      await ensureWorkers(mode, "invoice", 2);
+      await ensureWorkers(mode, "email", 1);
+    }
+    const result = (
+      await api("/seed", {
+        transport: "both",
+        scenario: "invalid_email",
+        count: 3,
+      })
+    ).data;
+    errorExperiment = result.experiment;
+    localStorage.setItem("moc-error-experiment", errorExperiment);
+    await refresh();
+    toast("Đã tạo một đơn lỗi rồi hai đơn tốt; Kafka cùng partition 0.");
+  });
+$("replay-shop").onclick = () =>
+  busy($("replay-shop"), async () => {
+    $("shop-replay-result").textContent =
+      "Group phân tích mới đang đọc topic thật…";
+    const r = (await api("/replay", {})).data;
+    $("shop-replay-result").textContent =
+      `Topic: ${r.topic}\nGroup mới: ${r.group}\nĐọc ${r.records.length} bản ghi / ${r.unique_orders} đơn khác nhau.\n\n` +
+      r.records
+        .map(
+          (x) =>
+            `${short(x.order_id)}  partition=${x.partition}  offset=${x.offset}`,
+        )
+        .join("\n") +
+      "\n\n" +
+      r.meaning;
+  });
+
+async function boot() {
+  try {
+    const r = (await api("/catalog")).data;
+    catalog = r.products;
+    $("mailbox-link").href = r.mailpit_url;
+    $("management-link").href = r.management_url;
+    try {
+      cart = JSON.parse(localStorage.getItem("moc-cart-v4") || "[]").filter(
+        (r) =>
+          catalog.some((p) => p.sku === r.sku && p.sizes.includes(r.size)) &&
+          Number.isInteger(r.quantity) &&
+          r.quantity > 0 &&
+          r.quantity <= 10,
+      );
+      selected = localStorage.getItem("moc-last-order");
+    } catch (error) {
+      cart = [];
+    }
+    renderCatalog();
+    renderCart();
+    changeTab(location.hash.slice(1) || "store");
+    await refresh();
+    setInterval(refresh, 1500);
+  } catch (error) {
+    toast("Chưa tải được cửa hàng: " + error.message, true);
+  }
+}
 boot();

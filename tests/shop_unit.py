@@ -1,6 +1,5 @@
 """Domain invariants; no broker required. Uses the project's reportlab dependency."""
 import concurrent.futures
-import os
 from pathlib import Path
 import sys
 import tempfile
@@ -8,8 +7,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import shop_store as store
-from shop_fulfillment import render_invoice
+from shop import store
+from shop.fulfillment import render_invoice
 
 
 class ShopDomain(unittest.TestCase):

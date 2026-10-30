@@ -2,10 +2,9 @@
 import argparse
 import json
 import time
-import broker
-import shop_broker as bus
-import shop_store as store
-from shop_fulfillment import fulfill
+from shop import broker as bus
+from shop import store
+from shop.fulfillment import fulfill
 
 
 def complete(payload, name, transport):
@@ -18,7 +17,7 @@ def rabbit(name, role):
     while True:
         try:
             store.update_worker(name,'rabbitmq',role,'connecting')
-            with broker.connection() as conn:
+            with bus.connection() as conn:
                 ch=bus.topology(conn);ch.basic_qos(prefetch_count=1)
                 def consume(channel,method,props,body):
                     payload=None

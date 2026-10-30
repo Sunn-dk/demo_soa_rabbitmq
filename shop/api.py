@@ -11,12 +11,11 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-import broker
-import shop_broker as bus
-import shop_store as store
+from shop import broker as bus
+from shop import store
 
 router=APIRouter(prefix='/api/shop',tags=['Cửa hàng thực tế'])
-ROOT=Path(__file__).parent
+ROOT=Path(__file__).resolve().parents[1]
 PROCESSES={}
 LOCK=threading.RLock()
 DISPATCH_LOCKS={k:threading.Lock() for k in ('rabbitmq','kafka')}
@@ -32,7 +31,7 @@ def dispatch(transport):
                 rows=store.pending_outbox(100,transport)
                 if rows:
                     if transport=='rabbitmq':
-                        with broker.connection() as conn:
+                        with bus.connection() as conn:
                             ch=bus.topology(conn);ch.confirm_delivery()
                             for row in rows:
                                 try:
@@ -188,7 +187,7 @@ def add_worker(req:WorkerRequest):
         (ROOT/'data').mkdir(exist_ok=True)
         with (ROOT/'data'/(name+'.log')).open('a',encoding='utf8') as log:
             kwargs={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
-            p=subprocess.Popen([sys.executable,'-u',str(ROOT/'shop_worker.py'),name,req.transport,req.role],cwd=ROOT,stdout=log,stderr=log,**kwargs)
+            p=subprocess.Popen([sys.executable,'-u','-m','shop.worker',name,req.transport,req.role],cwd=ROOT,stdout=log,stderr=log,**kwargs)
         PROCESSES[name]=p;PROCESS_META[name]=(req.transport,req.role)
     return dict(name=name,pid=p.pid)
 
@@ -245,7 +244,7 @@ def retry_task(task_id:str):
         else:
             store.retry(task_id)
     else:
-        with DISPATCH_LOCKS['rabbitmq'],broker.connection() as conn:
+        with DISPATCH_LOCKS['rabbitmq'],bus.connection() as conn:
             ch=bus.topology(conn);ch.confirm_delivery();found=False
             for _ in range(200):
                 method,props,body=ch.basic_get(bus.dlq(task['role']),auto_ack=False)
@@ -326,7 +325,7 @@ def reset():
     with LOCK,DISPATCH_LOCKS['rabbitmq'],DISPATCH_LOCKS['kafka']:
         if any(p.poll() is None for p in PROCESSES.values()):
             raise HTTPException(409,'Dừng toàn bộ worker cửa hàng trước khi làm mới phiên')
-        with broker.connection() as conn:
+        with bus.connection() as conn:
             ch=bus.topology(conn)
             for role in bus.ROLES:
                 if ch.queue_declare(bus.queue(role),passive=True).method.consumer_count:

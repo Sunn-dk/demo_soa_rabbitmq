@@ -3,8 +3,8 @@ import base64
 import json
 import os
 import threading
+import pika
 from urllib.request import Request, urlopen
-import broker
 
 PREFIX = 'seminar.shop.v4'
 EXCHANGE = PREFIX + '.tasks'
@@ -13,6 +13,14 @@ PARTITIONS = 2
 ROLES = ('invoice', 'email')
 _kafka_ready = None
 _kafka_lock = threading.Lock()
+
+
+def connection():
+    return pika.BlockingConnection(pika.ConnectionParameters(
+        host=os.getenv('RABBITMQ_HOST','127.0.0.1'),
+        port=int(os.getenv('RABBITMQ_PORT','5672')),
+        credentials=pika.PlainCredentials(os.getenv('RABBITMQ_USER','guest'),os.getenv('RABBITMQ_PASS','guest')),
+        heartbeat=30,blocked_connection_timeout=5,socket_timeout=3,connection_attempts=1))
 
 
 def queue(role):
@@ -38,7 +46,6 @@ def topology(conn):
 
 
 def rabbit_publish(ch, payload):
-    import pika
     ch.basic_publish(EXCHANGE, payload['role'], json.dumps(payload).encode(),
         properties=pika.BasicProperties(delivery_mode=2,content_type='application/json',message_id=payload['task_id']),mandatory=True)
 
@@ -48,8 +55,8 @@ def bootstrap():
 
 
 def topic(role):
-    import shop_store
-    return PREFIX + '.' + shop_store.settings()['generation'] + '.' + role
+    from shop import store
+    return PREFIX + '.' + store.settings()['generation'] + '.' + role
 
 
 def ensure_kafka():

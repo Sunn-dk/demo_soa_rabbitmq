@@ -4,7 +4,7 @@
 
 ## Điều kiện chung và khác biệt có chủ ý
 
-Hai transport cùng catalogue, giá server, SQLite, `shop_fulfillment.fulfill()`, PDF ReportLab và SMTP Mailpit; nhịp quan sát cùng một setting. Mỗi hệ chạy một broker trên cùng máy. RabbitMQ dùng classic work queues, Kafka dùng Consumer Groups truyền thống, mỗi process xử lý tuần tự bản ghi đã poll. Kafka có 2 partition/topic, RF=1; không dùng Share Groups. Đây là so sánh mô hình phục vụ bài toán, không phải benchmark năng lực cực đại.
+Hai transport cùng catalogue, giá server, SQLite, `shop/fulfillment.py: fulfill()`, PDF ReportLab và SMTP Mailpit; nhịp quan sát cùng một setting. Mỗi hệ chạy một broker trên cùng máy. RabbitMQ dùng classic work queues, Kafka dùng Consumer Groups truyền thống, mỗi process xử lý tuần tự bản ghi đã poll. Kafka có 2 partition/topic, RF=1; không dùng Share Groups. Đây là so sánh mô hình phục vụ bài toán, không phải benchmark năng lực cực đại.
 
 | Bài toán | RabbitMQ đang chạy | Kafka đang chạy | Kết luận đúng phạm vi |
 |---|---|---|---|
@@ -16,7 +16,7 @@ Hai transport cùng catalogue, giá server, SQLite, `shop_fulfillment.fulfill()`
 
 ## Thí nghiệm 1: partition là đơn vị gán việc của classic group
 
-`shop_broker.PARTITIONS=2`; mỗi vai trò có topic riêng. `shop_worker.kafka()` đăng ký callback `on_assign`, lưu assignment thực vào SQLite. UI đếm consumer có partition, không đếm process đang chạy thành năng lực xử lý. Nút chuẩn bị chờ 4 RabbitMQ consumer và 2 Kafka consumer có assignment trước khi báo sẵn sàng.
+`shop/broker.py: PARTITIONS=2`; mỗi vai trò có topic riêng. `shop/worker.py: kafka()` đăng ký callback `on_assign`, lưu assignment thực vào SQLite. UI đếm consumer có partition, không đếm process đang chạy thành năng lực xử lý. Nút chuẩn bị chờ 4 RabbitMQ consumer và 2 Kafka consumer có assignment trước khi báo sẵn sàng.
 
 Có thể tăng partition để có 4 consumer hoạt động, hoặc lập lịch song song trong consumer; cần thiết kế xử lý offset khi hoàn tất lệch thứ tự và bảo vệ thứ tự theo key. Tăng partition cũng có ảnh hưởng phân bố key. Không diễn giải kết quả là Kafka chỉ chạy được hai worker hoặc RabbitMQ luôn nhanh hơn.
 

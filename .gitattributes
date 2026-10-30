@@ -9,3 +9,6 @@
 Dockerfile text eol=lf
 *.cmd text eol=crlf
 *.docx binary
+*.pdf binary
+*.ttf binary
+*.jpg binary

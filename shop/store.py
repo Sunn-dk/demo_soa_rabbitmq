@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('SHOP_DB', str(ROOT / 'data' / 'shop.sqlite3')))
 FILES = Path(os.getenv('SHOP_FILES', str(ROOT / 'data' / 'invoices')))
 CATALOG = [

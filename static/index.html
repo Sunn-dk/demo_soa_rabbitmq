@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mộc Studio · Mua sắm & theo dõi đơn hàng</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232d5145'/%3E%3Ctext x='10' y='47' font-size='45' fill='white'%3Em.%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/static/shop.css" />
+  </head>
+  <body>
+    <div class="announcement">
+      Một chút tối giản, cho mỗi ngày.
+      <span>Miễn phí giao hàng từ 1.000.000 đ</span>
+    </div>
+    <header class="site-header">
+      <a class="brand" href="#store" aria-label="Mộc Studio trang chủ"
+        ><span class="brand-mark">m.</span
+        ><span>mộc<span class="brand-sub">STUDIO</span></span></a
+      >
+      <nav aria-label="Điều hướng chính">
+        <button data-tab="store" class="active">Cửa hàng</button
+        ><button data-tab="orders">
+          Đơn hàng <span id="nav-orders" class="nav-count">0</span></button
+        ><button data-tab="operations">Phòng vận hành</button
+        ><button data-tab="compare">RabbitMQ & Kafka</button>
+      </nav>
+      <a
+        class="mail-link"
+        id="mailbox-link"
+        href="http://localhost:8025"
+        target="_blank"
+        rel="noopener"
+        >Hộp thư thực hành ↗</a
+      >
+    </header>
+    <main>
+      <section id="view-store" class="view">
+        <div class="hero">
+          <div>
+            <p class="eyebrow">EVERYDAY COLLECTION / 2026</p>
+            <h1>Mặc đơn giản.<br />Sống nhiều hơn.</h1>
+            <p>Những món đồ dễ mặc, dễ kết hợp, dành cho nhịp sống của bạn.</p>
+            <a class="text-link" href="#catalog">Khám phá bộ sưu tập ↓</a>
+          </div>
+          <div class="hero-image">
+            <img
+              src="/static/products/jacket.jpg"
+              alt="Áo khoác Olive trong bộ sưu tập"
+            /><span>EVERYDAY, WELL MADE.</span>
+          </div>
+        </div>
+        <div class="shopping-layout">
+          <section id="catalog">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">TỦ ĐỒ CỦA BẠN</p>
+                <h2>Chọn điều bạn thích.</h2>
+              </div>
+              <span id="product-count">6 sản phẩm</span>
+            </div>
+            <div
+              id="categories"
+              class="filters"
+              aria-label="Lọc sản phẩm"
+            ></div>
+            <div id="products" class="product-grid"></div>
+          </section>
+          <aside class="cart-panel">
+            <div class="section-heading">
+              <h2>Giỏ hàng</h2>
+              <span id="cart-count">0 món</span>
+            </div>
+            <div id="cart-items"></div>
+            <div id="cart-totals"></div>
+            <form id="checkout-form">
+              <h3>Thông tin nhận hàng</h3>
+              <label
+                >Họ và tên<input
+                  name="name"
+                  required
+                  minlength="2"
+                  maxlength="100"
+                  autocomplete="name"
+                  placeholder="Nguyễn Minh Anh" /></label
+              ><label
+                >Email nhận hóa đơn<input
+                  name="email"
+                  type="email"
+                  required
+                  maxlength="190"
+                  autocomplete="email"
+                  placeholder="minhanh@example.test" /></label
+              ><label
+                >Địa chỉ giao hàng<textarea
+                  name="address"
+                  required
+                  minlength="5"
+                  maxlength="250"
+                  autocomplete="street-address"
+                  placeholder="Số nhà, đường, phường và tỉnh/thành"
+                ></textarea>
+              </label>
+              <div class="payment-note">
+                <span>◉</span>
+                <div>
+                  <strong>Thanh toán khi nhận hàng</strong
+                  ><small>COD · chưa thu tiền khi đặt đơn</small>
+                </div>
+              </div>
+              <button id="checkout" class="button primary" type="submit">
+                Đặt hàng & nhận hóa đơn →
+              </button>
+              <p class="fine">
+                Cửa hàng thực hành: email được gửi vào hộp thư Mailpit trên máy
+                này. Không gửi ra địa chỉ email thật.
+              </p>
+            </form>
+          </aside>
+        </div>
+      </section>
+      <section id="view-orders" class="view" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">SAU KHI BẠN ĐẶT HÀNG</p>
+          <h1>Đơn hàng & hóa đơn.</h1>
+          <p>
+            Đơn được ghi nhận ngay. Hóa đơn và email sẽ xuất hiện khi từng bước
+            xử lý hoàn tất.
+          </p>
+        </div>
+        <div class="orders-layout">
+          <div id="order-list" class="order-list"></div>
+          <div id="order-detail" class="panel order-detail"></div>
+        </div>
+      </section>
+      <section id="view-operations" class="view" hidden>
+        <div class="page-heading with-action">
+          <div>
+            <p class="eyebrow">PHÒNG VẬN HÀNH / BROKER THẬT</p>
+            <h1>Từ đơn hàng đến hộp thư.</h1>
+            <p>
+              Worker tạo PDF và gửi email thật. Dừng một worker để theo dõi công
+              việc được khôi phục.
+            </p>
+          </div>
+          <a
+            href="http://localhost:15672"
+            id="management-link"
+            target="_blank"
+            rel="noopener"
+            class="button secondary"
+            >RabbitMQ Management ↗</a
+          >
+        </div>
+        <div id="global-metrics" class="metrics-grid"></div>
+        <div class="control-bar">
+          <div class="segmented" id="ops-transport">
+            <button data-transport="rabbitmq" class="active">RabbitMQ</button
+            ><button data-transport="kafka">Kafka · classic group</button>
+          </div>
+          <label class="delay-control"
+            >Nhịp quan sát
+            <select id="observation-delay">
+              <option value="0">0s · chạy bình thường</option>
+              <option value="2" selected>2s mỗi bước</option>
+              <option value="4">4s mỗi bước</option>
+              <option value="6">6s mỗi bước</option>
+            </select></label
+          >
+        </div>
+        <p class="fine observation-note">
+          Nhịp quan sát chỉ giãn thời gian trước khi tạo PDF / gửi SMTP, áp dụng
+          cùng giá trị cho hai broker. Đặt 0 để bỏ khoảng giãn. Các số liệu này
+          không phải benchmark broker.
+        </p>
+        <div id="pipeline" class="pipeline"></div>
+        <div class="worker-columns">
+          <section class="panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">BƯỚC 01</p>
+                <h2>Tạo hóa đơn PDF</h2>
+              </div>
+              <button class="button small" data-add-role="invoice">
+                + Thêm consumer
+              </button>
+            </div>
+            <div id="invoice-workers" class="workers"></div>
+          </section>
+          <section class="panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">BƯỚC 02</p>
+                <h2>Gửi email kèm PDF</h2>
+              </div>
+              <button class="button small" data-add-role="email">
+                + Thêm consumer
+              </button>
+            </div>
+            <div id="email-workers" class="workers"></div>
+          </section>
+        </div>
+        <div class="scenario-bar">
+          <div>
+            <strong>Đặt tình huống thực tế</strong>
+            <p>Đơn thử dùng cùng sản phẩm, giá và quy trình với cửa hàng.</p>
+          </div>
+          <button class="button secondary" data-seed="normal">
+            Tạo 6 đơn hàng</button
+          ><button class="button secondary" data-seed="invalid_email">
+            Đơn lỗi email + 2 đơn tốt</button
+          ><button class="button secondary" data-seed="crash">
+            Sập sau lưu hóa đơn
+          </button>
+        </div>
+        <section class="panel">
+          <div class="section-heading">
+            <h2 id="errors-heading">DLQ & tác vụ bị chặn</h2>
+          </div>
+          <div id="blocked-tasks"></div>
+        </section>
+        <div class="evidence-grid">
+          <section class="panel">
+            <div class="section-heading"><h2>Đơn đang đi qua hệ thống</h2></div>
+            <div class="table-scroll" id="operations-orders"></div>
+          </section>
+          <section class="panel">
+            <div class="section-heading">
+              <h2>Dấu vết xử lý</h2>
+              <span>Mới nhất ở trên</span>
+            </div>
+            <div id="event-log" class="event-log"></div>
+          </section>
+        </div>
+        <details class="panel inspector">
+          <summary>
+            Payload & transactional outbox <span>Thông tin kỹ thuật</span>
+          </summary>
+          <p class="fine">
+            Đơn và yêu cầu publish được commit cùng nhau trong SQLite.
+            Dispatcher chỉ đánh dấu published khi broker xác nhận; lỗi kết nối
+            sẽ được thử lại. Payload dưới đây là dữ liệu lưu để publish.
+          </p>
+          <div class="table-scroll" id="outbox-table"></div>
+        </details>
+        <div class="reset-row">
+          <p class="fine">
+            DB cửa hàng: data/shop.sqlite3 · PDF: data/invoices.
+          </p>
+          <button id="reset-shop" class="text-button danger">
+            Làm mới phiên thực hành
+          </button>
+        </div>
+      </section>
+      <section id="view-compare" class="view" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">CHỌN CÔNG CỤ THEO BÀI TOÁN</p>
+          <h1>Cùng đơn hàng.<br />Khác cách chia việc.</h1>
+          <p>
+            Hai broker thực hiện cùng hàm tạo hóa đơn và gửi email. Quan sát
+            phần thuận tiện của RabbitMQ khi phân phối từng công việc độc lập.
+          </p>
+        </div>
+        <div class="comparison-intro">
+          <div class="panel">
+            <span class="number-label">01 / MỞ RỘNG CONSUMER</span>
+            <h2>Thêm người, có thêm việc?</h2>
+            <p>
+              RabbitMQ phân phối từ một queue cho consumer rảnh. Kafka classic
+              group giao mỗi partition cho một consumer tại một thời điểm. Với
+              topic hiện tại có 2 partition, thêm đến 4 consumer sẽ có consumer
+              chưa được giao partition.
+            </p>
+            <button id="prepare-comparison" class="button primary">
+              Chuẩn bị 4 worker hóa đơn mỗi bên</button
+            ><button id="seed-comparison" class="button secondary">
+              Nạp 6 đơn thật mỗi bên
+            </button>
+          </div>
+          <div class="comparison-explainer">
+            <p class="eyebrow">CẤU HÌNH ĐANG SO SÁNH</p>
+            <div>
+              <strong>1 queue</strong><span>RabbitMQ / mỗi loại công việc</span>
+            </div>
+            <div>
+              <strong>2 partition</strong
+              ><span>Kafka / mỗi topic công việc</span>
+            </div>
+            <p>
+              Có thể tăng partition hoặc xử lý song song trong ứng dụng Kafka;
+              khi đó phải thiết kế thêm assignment, offset và thứ tự. Đây là
+              giới hạn của cấu hình / mô hình đang chạy, không phải giới hạn
+              throughput chung của Kafka.
+            </p>
+          </div>
+        </div>
+        <div id="comparison-live" class="comparison-live"></div>
+        <div class="panel comparison-case">
+          <span class="number-label">02 / MỘT ĐỊA CHỈ EMAIL SAI</span>
+          <h2>Đơn lỗi có giữ chân đơn tốt?</h2>
+          <p>
+            Tạo một đơn có email sai, sau đó hai đơn tốt. Bên Kafka, cả ba được
+            đưa vào cùng partition 0 và consumer đang dùng chính sách giữ thứ
+            tự: chưa commit bản ghi lỗi thì pause partition đó. Các partition
+            khác vẫn có thể chạy. RabbitMQ NACK đơn lỗi sang DLQ, consumer tiếp
+            tục nhận đơn tốt.
+          </p>
+          <button id="error-comparison" class="button primary">
+            Chạy tình huống lỗi trên cả hai broker</button
+          ><a href="#operations" class="button secondary"
+            >Xem và khôi phục ở phòng vận hành →</a
+          >
+          <div id="error-comparison-result"></div>
+          <p class="fine">
+            Kafka có thể tránh việc chặn bằng retry topic / DLQ / xử lý bất đồng
+            bộ; ứng dụng phải quyết định thứ tự và cách commit. Nút “Chuyển sang
+            topic lỗi” ở phòng vận hành thực sự publish topic DLQ rồi commit
+            offset nguồn.
+          </p>
+        </div>
+        <div class="panel comparison-case">
+          <span class="number-label">03 / ĐỌC LẠI CHO ỨNG DỤNG KHÁC</span>
+          <h2>Log vẫn hữu ích sau khi tạo hóa đơn.</h2>
+          <p>
+            Cho một group phân tích mới đọc các tác vụ đã lưu trong topic hóa
+            đơn. Nó chỉ đọc log, không tạo thêm hóa đơn hay gửi email. Đây là
+            điểm mạnh của Kafka khi nhiều ứng dụng cần lịch sử sự kiện.
+          </p>
+          <button id="replay-shop" class="button secondary">
+            Đọc lại bằng group analytics mới
+          </button>
+          <pre id="shop-replay-result">
+Kết quả sẽ hiển thị topic, group, order_id, partition và offset thực.</pre
+          >
+        </div>
+        <div class="scope-note">
+          <strong>Phạm vi của bài so sánh</strong>
+          <p>
+            RabbitMQ classic queues trên một broker và Kafka Consumer Groups
+            truyền thống, một consumer xử lý tuần tự bản ghi đã poll. Kafka còn
+            có Share Groups; RabbitMQ còn có Streams. Không kết luận “Kafka chậm
+            hơn”, “không retry được” hay “RabbitMQ không mất tin”. Email dùng
+            SMTP cục bộ; crash giữa SMTP và ghi sổ gửi vẫn có thể gửi lặp.
+          </p>
+          <a
+            href="https://kafka.apache.org/42/design/design/"
+            target="_blank"
+            rel="noopener"
+            >Kafka Design ↗</a
+          ><a
+            href="https://www.rabbitmq.com/docs/confirms"
+            target="_blank"
+            rel="noopener"
+            >RabbitMQ ACK & confirms ↗</a
+          >
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <span class="brand">mộc<span class="brand-sub">STUDIO</span></span>
+      <p>
+        Trang bán hàng thực hành · Đơn hàng, PDF và email có dữ liệu thật trong
+        môi trường cục bộ.
+      </p>
+      <a href="/docs">Xem API thực hành ↗</a>
+    </footer>
+    <div id="toast" role="status" class="toast" hidden></div>
+    <dialog id="invoice-dialog">
+      <div class="dialog-toolbar">
+        <strong>Hóa đơn đơn hàng</strong>
+        <div>
+          <a id="download-invoice" class="button small" href="#">Tải PDF</a
+          ><button
+            id="close-invoice"
+            class="icon-button"
+            aria-label="Đóng hóa đơn"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <div id="invoice-preview"></div>
+    </dialog>
+    <script src="/static/shop.js"></script>
+  </body>
+</html>

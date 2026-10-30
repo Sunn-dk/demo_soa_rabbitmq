@@ -18,7 +18,6 @@ docker compose --profile kafka up -d --build --wait --wait-timeout 240
 | http://localhost:8025 | Mailpit: email SMTP và PDF đính kèm, giữ trong máy thực hành |
 | http://localhost:15672 | RabbitMQ Management, tài khoản demo `guest` / `guest` |
 | http://localhost:8000/docs | API, nhóm **Cửa hàng thực tế** |
-| http://localhost:8000/lab | Lab v3 trước đây để tham khảo |
 
 Windows có thể bấm `start-demo.cmd`. Nếu chỉ học RabbitMQ, dùng `docker compose up -d --build --wait --wait-timeout 240`; phần Kafka cần profile riêng.
 
@@ -69,13 +68,13 @@ Trình duyệt → POST /api/shop/checkout → SQLite (đơn + outbox) → HTTP 
 
 | File | Trách nhiệm |
 |---|---|
-| `shop_api.py` | Checkout 202, dispatcher outbox, tạo/kill worker, tình huống, retry, Kafka replay |
-| `shop_store.py` | Giá server, snapshot đơn, transaction, idempotency, invoices/deliveries/events |
-| `shop_broker.py` | RabbitMQ topology/publish/metrics; Kafka topic/partition, producer xác nhận delivery |
-| `shop_worker.py` | RabbitMQ manual ACK/NACK, prefetch=1; Kafka assignment/pause/retry/manual commit |
-| `shop_fulfillment.py` | Cùng hàm nghiệp vụ cho hai broker: PDF tiếng Việt và SMTP kèm file |
-| `index.html`, `static/shop.js`, `static/shop.css` | Cửa hàng light mode, đơn hàng, điều khiển và quan sát |
-| `app.py` | Ghép API cửa hàng, giữ API/lab v3 |
+| `shop/api.py` | Checkout 202, dispatcher outbox, tạo/kill worker, tình huống, retry, Kafka replay |
+| `shop/store.py` | Giá server, snapshot đơn, transaction, idempotency, invoices/deliveries/events |
+| `shop/broker.py` | RabbitMQ topology/publish/metrics; Kafka topic/partition, producer xác nhận delivery |
+| `shop/worker.py` | RabbitMQ manual ACK/NACK, prefetch=1; Kafka assignment/pause/retry/manual commit |
+| `shop/fulfillment.py` | Cùng hàm nghiệp vụ cho hai broker: PDF tiếng Việt và SMTP kèm file |
+| `static/index.html`, `static/shop.js`, `static/shop.css` | Cửa hàng light mode, đơn hàng, điều khiển và quan sát |
+| `app.py` | Khởi động FastAPI, gắn router và frontend |
 
 - Đơn, outbox, hóa đơn, sổ gửi và log: **`data/shop.sqlite3`**. PDF: **`data/invoices/<order_id>.pdf`**.
 - Mailpit: Docker volume **mail-data**, giữ tối đa 500 email.
@@ -98,7 +97,7 @@ docker compose --profile kafka up -d --build --wait --wait-timeout 240
 
 Mặc định không cần `.env`. Cổng bận thì `Copy-Item .env.example .env` rồi sửa WEB_PORT/MAILPIT_WEB_PORT/AMQP_PORT/MANAGEMENT_PORT/KAFKA_PORT/SMTP_PORT. macOS/Linux dùng `cp`. Không commit `.env`, dữ liệu khách, database hoặc token. Tài khoản ví dụ chỉ dùng demo; đổi biến RabbitMQ không tự đổi tài khoản trong volume cũ.
 
-**Reset cửa hàng:** dừng các worker, chờ broker nhận mất kết nối, bấm **Làm mới phiên thực hành**. Chỉ dọn dữ liệu/queue cửa hàng; PDF cũ, thư Mailpit và topic Kafka cũ được giữ, không còn liên kết từ phiên mới. Reset đổi generation topic; retention không tự xóa topic. Lab v3 có DB/namespace và nút reset riêng.
+**Reset cửa hàng:** dừng các worker, chờ broker nhận mất kết nối, bấm **Làm mới phiên thực hành**. Chỉ dọn dữ liệu/queue cửa hàng; PDF cũ, thư Mailpit và topic Kafka cũ được giữ, không còn liên kết từ phiên mới. Reset đổi generation topic; retention không tự xóa topic. Dữ liệu lab cũ trên đĩa được giữ; mã nguồn lab v3 đã bỏ để chỉ học một luồng cửa hàng.
 
 ```powershell
 docker compose --profile kafka down
@@ -118,11 +117,13 @@ Lệnh dừng giữ volume và `data/`. Lần sau thêm consumer để xử lý 
 
 ## Tài liệu và kiểm chứng
 
-- [Bản PDF để in: cách chạy, lời thuyết trình, giải thích code và Kafka](docs/Huong_Dan_Demo_Cua_Hang_RabbitMQ.pdf). Tạo lại từ Markdown bằng `python tests/build_shop_guide.py` trong môi trường có requirements.
+- [Bản PDF để in: cách chạy, lời thuyết trình, giải thích code và Kafka](docs/Huong_Dan_Demo_Cua_Hang_RabbitMQ.pdf). Tạo lại từ Markdown bằng `python tools/build_guide.py` trong môi trường có requirements.
+- [Sơ đồ thư mục, nút bấm và luồng từng file](docs/LUONG_XU_LY.md).
+- [Kết quả kiểm thử và đánh giá tính thực tế ngày 31/10/2026](docs/KET_QUA_KIEM_THU.md).
 - [Kịch bản cửa hàng trong 15–20 phút](docs/DEMO_CUA_HANG.md).
-- [Giải thích code theo từng bước](docs/GIAI_THICH_CUA_HANG.md).
+- [Giải thích code theo từng bước](docs/SO_TAY_DOC_CODE.md).
 - [So sánh Kafka và phạm vi kết luận](docs/SO_SANH_KAFKA.md).
 - [Nguồn chính thức RabbitMQ, Kafka, Pika](docs/TAI_LIEU_HOC.md).
 - [Chạy kiểm thử](tests/README.md).
 
-Word **Huong_Dan_Clone_Va_Chay_Demo_SOA.docx** và **KICH_BAN_SEMINAR.md** trước đây hướng dẫn lab v3 tại `/lab`; dùng hướng dẫn cửa hàng cho giao diện mới. Ảnh sản phẩm lấy từ bộ ảnh có sẵn trong dự án. PDF nhúng DejaVu Sans; giữ giấy phép ở `static/fonts/LICENSE-DejaVu.txt`.
+Ảnh sản phẩm lấy từ bộ ảnh có sẵn trong dự án. PDF nhúng DejaVu Sans; giữ giấy phép ở `static/fonts/LICENSE-DejaVu.txt`.

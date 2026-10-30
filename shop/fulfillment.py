@@ -13,7 +13,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-import shop_store as store
+from shop import store
 
 LOCAL_TZ=timezone(timedelta(hours=7))
 
@@ -27,7 +27,7 @@ def money(n):
 
 
 def render_invoice(order, number):
-    font=Path(__file__).parent/'static/fonts/DejaVuSans.ttf'
+    font=Path(__file__).resolve().parents[1]/'static/fonts/DejaVuSans.ttf'
     if 'Receipt' not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont('Receipt',str(font)))
     filename=order['id']+'.pdf'
